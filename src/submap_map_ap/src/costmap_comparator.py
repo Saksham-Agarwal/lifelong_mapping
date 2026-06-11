@@ -4,7 +4,10 @@ import rclpy
 from rclpy.node import Node
 
 from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import TransformStamped
+
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from tf2_ros import Buffer, TransformListener, TransformException
 
 
 class CostmapComparator(Node):
@@ -13,20 +16,19 @@ class CostmapComparator(Node):
         super().__init__('costmap_comparator')
 
         self.costmap = None
-        self.robot_pose = None
+        self.side_length = 1.0  # meters
 
-        self.create_subscription(
-            OccupancyGrid,
-            '/global_costmap/costmap',
-            self.costmap_callback,
-            10
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL
         )
 
         self.create_subscription(
-            PoseWithCovarianceStamped,
-            '/amcl_pose',
-            self.pose_callback,
-            10
+            OccupancyGrid,
+            '/map',
+            self.costmap_callback,
+            map_qos
         )
 
         self.region_pub = self.create_publisher(
@@ -35,41 +37,55 @@ class CostmapComparator(Node):
             10
         )
 
-        self.side_length = 1.0  # meters
+        # TF listener — tracks the smooth combination of AMCL + Odometry
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
-    def pose_callback(self, msg):
-        self.robot_pose = msg.pose.pose
-        self.get_logger().info(f"Received robot pose: ({self.robot_pose.position.x}, "
-                         f"{self.robot_pose.position.y})")
-
+        # Timer drives the update — 20Hz is plenty fast for a real-time feel
+        self.timer = self.create_timer(0.05, self.process_region) 
 
     def costmap_callback(self, msg):
         self.costmap = msg
-        self.get_logger().info(f"Received costmap: {msg.info.width}x{msg.info.height} "
-                         f"resolution: {msg.info.resolution}")
-        if self.robot_pose is not None:
-            self.extract_region(self.side_length)
+        self.get_logger().info(
+            f"Received global costmap: {msg.info.width}x{msg.info.height}"
+        )
 
-    def extract_region(self, side_length_m):
-
-        if self.costmap is None or self.robot_pose is None:
+    def process_region(self):
+        if self.costmap is None:
             return
 
+        # Get the latest smooth robot pose from the TF tree
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'map',
+                'base_footprint',
+                rclpy.time.Time() # rclpy.time.Time() correctly requests the latest available transform
+            )
+        except TransformException as ex:
+            self.get_logger().debug(f"TF not ready yet: {ex}")
+            return
+        except Exception as e:
+            self.get_logger().error(f"Unexpected error during TF lookup: {e}")
+            return
+
+        robot_x = transform.transform.translation.x
+        robot_y = transform.transform.translation.y
+
+        self.extract_region(robot_x, robot_y)
+
+    def extract_region(self, robot_x, robot_y):
         resolution = self.costmap.info.resolution
         origin_x = self.costmap.info.origin.position.x
         origin_y = self.costmap.info.origin.position.y
 
-        robot_x = self.robot_pose.position.x
-        robot_y = self.robot_pose.position.y
-
+        # Find where the robot is in the global array
         center_col = int((robot_x - origin_x) / resolution)
         center_row = int((robot_y - origin_y) / resolution)
 
-        half_cells = int((side_length_m / 2.0) / resolution)
+        half_cells = int((self.side_length / 2.0) / resolution)
 
         min_col = center_col - half_cells
         max_col = center_col + half_cells
-
         min_row = center_row - half_cells
         max_row = center_row + half_cells
 
@@ -78,73 +94,41 @@ class CostmapComparator(Node):
         data = self.costmap.data
 
         region = []
-
         for row in range(min_row, max_row + 1):
             current_row = []
-
             for col in range(min_col, max_col + 1):
-
                 if 0 <= row < height and 0 <= col < width:
-                    idx = row * width + col
-                    current_row.append(data[idx])
+                    current_row.append(data[row * width + col])
                 else:
-                    # Unknown space
-                    current_row.append(255)
-
+                    current_row.append(-1) # Unknown space for out of bounds
             region.append(current_row)
 
         region_height = len(region)
         region_width = len(region[0])
 
-        flattened_region = [
-            cell
-            for row_data in region
-            for cell in row_data
-        ]
-
         region_msg = OccupancyGrid()
-
         region_msg.header.stamp = self.get_clock().now().to_msg()
-        region_msg.header.frame_id = "map"
-
+        region_msg.header.frame_id = 'map'
         region_msg.info.resolution = resolution
         region_msg.info.width = region_width
         region_msg.info.height = region_height
+        
 
-        region_msg.info.origin.position.x = (
-            robot_x - side_length_m / 2.0
-        )
-        region_msg.info.origin.position.y = (
-            robot_y - side_length_m / 2.0
-        )
+        region_msg.info.origin.position.x = origin_x + (min_col * resolution)
+        region_msg.info.origin.position.y = origin_y + (min_row * resolution)
         region_msg.info.origin.position.z = 0.0
-
-        region_msg.info.origin.orientation.x = 0.0
-        region_msg.info.origin.orientation.y = 0.0
-        region_msg.info.origin.orientation.z = 0.0
         region_msg.info.origin.orientation.w = 1.0
+        
+        # Flatten the 2D array back to 1D for publishing
+        region_msg.data = [cell for row_data in region for cell in row_data]
 
-        region_msg.data = flattened_region
-        self.get_logger().info(
-           f"Publishing region {region_width}x{region_height}"
-        )
         self.region_pub.publish(region_msg)
-
-        self.get_logger().info(
-            f"Robot cell: ({center_row}, {center_col})"
-        )
-
-        self.get_logger().info(
-            f"Published region: "
-            f"{region_width}x{region_height}"
-        )
 
 
 def main():
     rclpy.init()
-
     node = CostmapComparator()
-    node.get_logger().info("Costmap Comparator node started 2.")  
+    node.get_logger().info("Costmap Comparator started.")
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
