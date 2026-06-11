@@ -10,13 +10,13 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from tf2_ros import Buffer, TransformListener, TransformException
 
 
-class CostmapComparator(Node):
+class CostmapGenerator(Node):
 
     def __init__(self):
-        super().__init__('costmap_comparator')
+        super().__init__('costmap_generator')
 
         self.costmap = None
-        self.side_length = 1.0  # meters
+        self.side_length = 2.5  # meters
 
         map_qos = QoSProfile(
             depth=1,
@@ -127,8 +127,8 @@ class CostmapComparator(Node):
 
 def main():
     rclpy.init()
-    node = CostmapComparator()
-    node.get_logger().info("Costmap Comparator started.")
+    node = CostmapGenerator()
+    node.get_logger().info("Costmap Generator started.")
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
