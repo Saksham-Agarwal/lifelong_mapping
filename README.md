@@ -40,16 +40,15 @@ This will generate:
 ### Localization
 
 ```bash
-ros2 launch nav2_bringup localization_launch.py map:=my_map.yaml
+ros2 launch nav2_bringup localization_launch.py map:=submap_map_ap/src/map/map.yaml
 ```
 
 ### Navigation
 
 ```bash
-ros2 launch nav2_bringup navigation_launch.py map:=my_map.yaml
+ros2 launch nav2_bringup navigation_launch.py map:=msubmap_map_ap/src/map/map.yaml
 ```
 
-> **Note:** Replace `my_map.yaml` with the path to your saved map file.
 
 ---
 
@@ -72,8 +71,8 @@ header:
 pose:
   pose:
     position:
-      x: -2.0
-      y: -0.5
+      x: 0.0
+      y: 0.0
       z: 0.0
     orientation:
       z: 0.0
