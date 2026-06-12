@@ -1,19 +1,18 @@
 import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
 def generate_launch_description():
     
-    # Replace this if your package name in package.xml is different
     pkg_name = 'submap_map_ap'
 
-    # Path to your saved rqt dashboard. 
-    # Update 'my_dashboard.perspective' to the exact name of your saved file!
-    # os.path.expanduser('~') automatically translates to '/home/saksham-22'
+    # This dynamically finds your package's install directory.
+    # Change 'rqt' to whatever folder name you actually put it in (e.g., 'config')
     rqt_perspective_path = os.path.join(
-        os.path.expanduser('~'), 
+        get_package_share_directory(pkg_name),
         'rqt', 
-        'my_dashboard.perspective'
+        'my_dashboard.perspective' # Make sure this matches your exact file name
     )
 
     return LaunchDescription([
@@ -38,18 +37,19 @@ def generate_launch_description():
             package=pkg_name,
             executable='costmap_aligner.py',
             name='costmap_cross_correlator',
-            output='screen'
+            output='screen',
+            parameters=[{'use_sim_time': True}] # <-- Add this line to your 3 custom nodes
         ),
         
-        # # 4. Detects the positive/negative cluster changes
-        # Node(
-        #     package=pkg_name,
-        #     executable='costmap_change_detector.py',
-        #     name='cluster_change_detector',
-        #     output='screen'
-        # ),
+        # 4. Detects the positive/negative cluster changes
+        Node(
+            package=pkg_name,
+            executable='costmap_change_detector.py',
+            name='cluster_change_detector',
+            output='screen'
+        ),
 
-        # 5. Your Custom RQT Dashboard (replaces the standard rqt_reconfigure)
+        # 5. Your Custom RQT Dashboard
         Node(
             package='rqt_gui',
             executable='rqt_gui',

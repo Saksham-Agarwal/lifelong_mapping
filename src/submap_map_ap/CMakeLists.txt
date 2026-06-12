@@ -17,6 +17,18 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY rqt
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY map
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY rviz
+  DESTINATION share/${PROJECT_NAME}
+)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclpy REQUIRED)
