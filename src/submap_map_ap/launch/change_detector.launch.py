@@ -1,3 +1,4 @@
+import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
@@ -5,6 +6,15 @@ def generate_launch_description():
     
     # Replace this if your package name in package.xml is different
     pkg_name = 'submap_map_ap'
+
+    # Path to your saved rqt dashboard. 
+    # Update 'my_dashboard.perspective' to the exact name of your saved file!
+    # os.path.expanduser('~') automatically translates to '/home/saksham-22'
+    rqt_perspective_path = os.path.join(
+        os.path.expanduser('~'), 
+        'rqt', 
+        'my_dashboard.perspective'
+    )
 
     return LaunchDescription([
         # 1. Generates the global map crop
@@ -37,5 +47,14 @@ def generate_launch_description():
         #     executable='costmap_change_detector.py',
         #     name='cluster_change_detector',
         #     output='screen'
-        # )
+        # ),
+
+        # 5. Your Custom RQT Dashboard (replaces the standard rqt_reconfigure)
+        Node(
+            package='rqt_gui',
+            executable='rqt_gui',
+            name='custom_rqt_dashboard',
+            output='screen',
+            arguments=['--perspective-file', rqt_perspective_path]
+        )
     ])

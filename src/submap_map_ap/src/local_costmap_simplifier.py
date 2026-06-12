@@ -9,8 +9,10 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 class LocalCostmapSimplifier(Node):
 
     def __init__(self):
-        super().__init__('local_costmap_simplifier')
-
+        super().__init__('your_costmap_simplifier_node')
+    
+        # Declare the parameter with a default value of 98
+        self.declare_parameter('obstacle_threshold', 98)
         map_qos = QoSProfile(
             depth=1,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -35,16 +37,18 @@ class LocalCostmapSimplifier(Node):
 
     def costmap_callback(self, msg):
         l_data = msg.data
-        simplified_local_data = []
+        # Fetch the latest parameter value dynamically
+        current_thresh = self.get_parameter('obstacle_threshold').value
         
+        simplified_local_data = []
         for value in l_data:
             if value == -1:
                 simplified_local_data.append(-1)
-            elif value >99:
+            elif value > current_thresh:  # Use the dynamic variable here
                 simplified_local_data.append(100)
             else:
-                simplified_local_data.append(0)
-                
+                simplified_local_data.append(0)  
+
         # 1. Create the new OccupancyGrid message
         simplified_msg = OccupancyGrid()
         

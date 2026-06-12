@@ -5,9 +5,7 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 import message_filters
 import numpy as np
-import cv2  # <-- Don't forget to import OpenCV
-
-
+import cv2  
 class ClusterChangeDetector(Node):
 
     def __init__(self):
