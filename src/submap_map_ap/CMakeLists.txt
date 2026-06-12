@@ -8,6 +8,8 @@ endif()
 install(PROGRAMS
   src/costmap_generator.py
   src/local_costmap_simplifier.py
+  src/costmap_aligner.py
+  src/costmap_change_detector.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
