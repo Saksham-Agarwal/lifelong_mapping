@@ -40,13 +40,13 @@ This will generate:
 ### Localization
 
 ```bash
-ros2 launch nav2_bringup localization_launch.py map:=submap_map_ap/src/map/map.yaml
+ros2 launch nav2_bringup localization_launch.py map:=src/submap_map_ap/map/map.yaml
 ```
 
 ### Navigation
 
 ```bash
-ros2 launch nav2_bringup navigation_launch.py map:=msubmap_map_ap/src/map/map.yaml
+ros2 launch nav2_bringup navigation_launch.py map:=src/submap_map_ap/map/map.yaml
 ```
 
 
