@@ -6,8 +6,28 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 install(PROGRAMS
-  src/costmap_comparator.py
+  src/costmap_generator.py
+  src/local_costmap_simplifier.py
+  src/costmap_aligner.py
+  src/costmap_change_detector.py
+  src/amcl_confidence.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY rqt
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY map
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY rviz
+  DESTINATION share/${PROJECT_NAME}
 )
 
 # find dependencies
