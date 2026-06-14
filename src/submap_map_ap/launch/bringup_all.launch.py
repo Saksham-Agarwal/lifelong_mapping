@@ -7,11 +7,9 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     
-    # Get the install directories for the packages we are launching from
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     submap_pkg_dir = get_package_share_directory('submap_map_ap')
 
-    # File paths
     map_yaml_file = os.path.join(submap_pkg_dir, 'map', 'map.yaml')    
     rviz_config_file = os.path.join(submap_pkg_dir, 'rviz', 'nav2_default_view.rviz')
     

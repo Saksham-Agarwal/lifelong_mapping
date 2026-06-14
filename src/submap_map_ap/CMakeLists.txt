@@ -10,6 +10,7 @@ install(PROGRAMS
   src/local_costmap_simplifier.py
   src/costmap_aligner.py
   src/costmap_change_detector.py
+  src/amcl_confidence.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
