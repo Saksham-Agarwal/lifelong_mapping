@@ -16,7 +16,7 @@ class CostmapGenerator(Node):
         super().__init__('costmap_generator')
 
         self.costmap = None
-        self.side_length = 4 # meters
+        self.side_length = 8 # meters
 
         map_qos = QoSProfile(
             depth=1,
