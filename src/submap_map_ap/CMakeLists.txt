@@ -11,6 +11,7 @@ install(PROGRAMS
   src/costmap_aligner.py
   src/costmap_change_detector.py
   src/scan_to_costmap_generator.py
+  src/local_region_inflated_map.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

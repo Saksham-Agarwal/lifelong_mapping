@@ -62,6 +62,10 @@ class ClusterChangeDetector(Node):
         g_obs = np.where(g_slice > 80, 255, 0).astype(np.uint8)
         l_obs = np.where(l_arr > 80, 255, 0).astype(np.uint8)
 
+        # NEW: Extract explicitly free space from the local map (e.g., 0 to 50)
+        # This prevents triggering negative changes in unobserved (-1) areas.
+        l_free = np.where((l_arr >= 0) & (l_arr < 50), 255, 0).astype(np.uint8)
+
         # 2. Create Tolerance Bands (Inflation)
         # A 5x5 kernel creates a ~12.5cm tolerance radius around every wall
         # If the local map is within 12.5cm of the global map, we consider them a "match"
@@ -69,12 +73,13 @@ class ClusterChangeDetector(Node):
         g_dilated = cv2.dilate(g_obs, kernel_dilate)
         l_dilated = cv2.dilate(l_obs, kernel_dilate)
 
-        # 3. Apply the User's Heuristic Rules
+        # 3. Apply the Heuristic Rules
         # Positive: Local obstacle exists, but NO global tolerance band surrounds it
         pos_img = np.where((l_obs > 0) & (g_dilated == 0), 255, 0).astype(np.uint8)
         
-        # Negative: Global obstacle exists, but NO local tolerance band surrounds it
-        neg_img = np.where((g_obs > 0) & (l_dilated == 0), 255, 0).astype(np.uint8)
+        # Negative: Global obstacle exists, NO local tolerance band surrounds it, 
+        # AND the local sensor explicitly confirms the space is FREE.
+        neg_img = np.where((g_obs > 0) & (l_dilated == 0) & (l_free > 0), 255, 0).astype(np.uint8)
 
         # 4. Filter remaining tiny noise clusters (Morphological Opening)
         kernel_clean = np.ones((3, 3), np.uint8)
