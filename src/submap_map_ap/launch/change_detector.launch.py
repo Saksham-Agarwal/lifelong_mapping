@@ -40,16 +40,23 @@ def generate_launch_description():
             output='screen',
             parameters=[{'use_sim_time': True}] # <-- Add this line to your 3 custom nodes
         ),
-        
-        # 4. Detects the positive/negative cluster changes
+
+        # 4. Inflated the local_region map of the bot using cv2
+        Node(
+            package=pkg_name,
+            executable='local_region_inflated_map.py',
+            name='local_map_inflater',
+            output='screen'
+        ),
+        # 5. Detects the positive/negative cluster changes
         Node(
             package=pkg_name,
             executable='costmap_change_detector.py',
-            name='cluster_change_detector',
+            name='costmap_change_detector',
             output='screen'
         ),
 
-        # 5. Your Custom RQT Dashboard
+        # 6. Your Custom RQT Dashboard
         Node(
             package='rqt_gui',
             executable='rqt_gui',

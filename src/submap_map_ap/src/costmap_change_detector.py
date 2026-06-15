@@ -3,132 +3,148 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
-from std_msgs.msg import Float32
-import message_filters
 import numpy as np
-import cv2  
 
-
-class ClusterChangeDetector(Node):
-
+class CostmapChangeDetector(Node):
     def __init__(self):
-        super().__init__('cluster_change_detector')
+        super().__init__('costmap_change_detector')
 
-        self.global_sub = message_filters.Subscriber(
-            self, 
-            OccupancyGrid, 
-            '/robot_local_region'
+        # Subscribers
+        self.inflated_sub = self.create_subscription(
+            OccupancyGrid,
+            '/inflated_local_region',
+            self.inflated_callback,
+            10
         )
-        self.aligned_local_sub = message_filters.Subscriber(
-            self, 
-            OccupancyGrid, 
-            '/aligned_local_costmap'
+        self.simplified_sub = self.create_subscription(
+            OccupancyGrid,
+            '/simplified_local_costmap',
+            self.simplified_callback,
+            10
         )
 
-        self.sync = message_filters.ApproximateTimeSynchronizer(
-            [self.global_sub, self.aligned_local_sub], 
-            queue_size=10, 
-            slop=0.2
+        # Publishers for isolated changes
+        self.pos_pub = self.create_publisher(
+            OccupancyGrid,
+            '/change/positive',
+            10
         )
-        self.sync.registerCallback(self.detect_changes)
+        self.neg_pub = self.create_publisher(
+            OccupancyGrid,
+            '/change/negative',
+            10
+        )
 
-        # Map Publishers
-        self.positive_pub = self.create_publisher(OccupancyGrid, '/changes/positive', 10)
-        self.negative_pub = self.create_publisher(OccupancyGrid, '/changes/negative', 10)
-        
-        # New Confidence Publisher
-        self.confidence_pub = self.create_publisher(Float32, '/confidence', 10)
+        # Cache for the latest inflated grid
+        self.latest_inflated_msg = None
 
-        self.get_logger().info("Cluster Change Detector with Confidence Heuristic Initialized.")
+        self.get_logger().info("Costmap Change Detector Node has been started.")
 
-    def detect_changes(self, global_msg, local_msg):
-        
-        g_res = global_msg.info.resolution
-        g_w, g_h = global_msg.info.width, global_msg.info.height
-        l_w, l_h = local_msg.info.width, local_msg.info.height
+    def inflated_callback(self, msg):
+        """Cache the latest inflated local region."""
+        self.latest_inflated_msg = msg
 
-        g_arr = np.array(global_msg.data, dtype=np.int8).reshape((g_h, g_w))
-        l_arr = np.array(local_msg.data, dtype=np.int8).reshape((l_h, l_w))
-
-        col_offset = int(round((local_msg.info.origin.position.x - global_msg.info.origin.position.x) / g_res))
-        row_offset = int(round((local_msg.info.origin.position.y - global_msg.info.origin.position.y) / g_res))
-
-        if col_offset < 0 or row_offset < 0 or col_offset + l_w > g_w or row_offset + l_h > g_h:
+    def simplified_callback(self, simplified_msg):
+        """Process subtraction and split when the primary map updates."""
+        if self.latest_inflated_msg is None:
+            self.get_logger().debug("Waiting for /inflated_local_region...")
             return
 
-        g_slice = g_arr[row_offset : row_offset + l_h, col_offset : col_offset + l_w]
+        inflated_msg = self.latest_inflated_msg
 
-        # 1. Extract solid obstacles as binary images (0 or 255)
-        g_obs = np.where(g_slice > 80, 255, 0).astype(np.uint8)
-        l_obs = np.where(l_arr > 80, 255, 0).astype(np.uint8)
-
-        # NEW: Extract explicitly free space from the local map (e.g., 0 to 50)
-        # This prevents triggering negative changes in unobserved (-1) areas.
-        l_free = np.where((l_arr >= 0) & (l_arr < 50), 255, 0).astype(np.uint8)
-
-        # 2. Create Tolerance Bands (Inflation)
-        # A 5x5 kernel creates a ~12.5cm tolerance radius around every wall
-        # If the local map is within 12.5cm of the global map, we consider them a "match"
-        kernel_dilate = np.ones((5, 5), np.uint8)
-        g_dilated = cv2.dilate(g_obs, kernel_dilate)
-        l_dilated = cv2.dilate(l_obs, kernel_dilate)
-
-        # 3. Apply the Heuristic Rules
-        # Positive: Local obstacle exists, but NO global tolerance band surrounds it
-        pos_img = np.where((l_obs > 0) & (g_dilated == 0), 255, 0).astype(np.uint8)
+        # --- Extract Grid A (Simplified - The Target Grid) ---
+        res_A = simplified_msg.info.resolution
+        orig_A_x = simplified_msg.info.origin.position.x
+        orig_A_y = simplified_msg.info.origin.position.y
+        width_A = simplified_msg.info.width
+        height_A = simplified_msg.info.height
         
-        # Negative: Global obstacle exists, NO local tolerance band surrounds it, 
-        # AND the local sensor explicitly confirms the space is FREE.
-        neg_img = np.where((g_obs > 0) & (l_dilated == 0) & (l_free > 0), 255, 0).astype(np.uint8)
+        # Load A data into 2D numpy array
+        data_A = np.array(simplified_msg.data, dtype=np.int8).reshape((height_A, width_A))
 
-        # 4. Filter remaining tiny noise clusters (Morphological Opening)
-        kernel_clean = np.ones((3, 3), np.uint8)
-        pos_clean = cv2.morphologyEx(pos_img, cv2.MORPH_OPEN, kernel_clean)
-        neg_clean = cv2.morphologyEx(neg_img, cv2.MORPH_OPEN, kernel_clean)
-
-        # 5. Calculate Confidence Score (Proportional Overlap)
-        # How many local pixels landed safely inside the global tolerance band?
-        matched_local = np.sum((l_obs > 0) & (g_dilated > 0))
-        # How many global pixels landed safely inside the local tolerance band?
-        matched_global = np.sum((g_obs > 0) & (l_dilated > 0))
+        # --- Extract Grid B (Inflated - The Subtrahend Grid) ---
+        res_B = inflated_msg.info.resolution
+        orig_B_x = inflated_msg.info.origin.position.x
+        orig_B_y = inflated_msg.info.origin.position.y
+        width_B = inflated_msg.info.width
+        height_B = inflated_msg.info.height
         
-        total_local = np.sum(l_obs > 0)
-        total_global = np.sum(g_obs > 0)
+        # Load B data into 2D numpy array
+        data_B = np.array(inflated_msg.data, dtype=np.int8).reshape((height_B, width_B))
 
-        # Prevent division by zero if the robot is in a completely empty space
-        total_pixels = total_local + total_global + 1e-6 
+        # --- Coordinate Mapping ---
+        y_A_indices, x_A_indices = np.mgrid[0:height_A, 0:width_A]
+
+        world_x = orig_A_x + (x_A_indices * res_A)
+        world_y = orig_A_y + (y_A_indices * res_A)
+
+        x_B_indices = np.floor((world_x - orig_B_x) / res_B).astype(int)
+        y_B_indices = np.floor((world_y - orig_B_y) / res_B).astype(int)
+
+        valid_mask = (
+            (x_B_indices >= 0) & (x_B_indices < width_B) &
+            (y_B_indices >= 0) & (y_B_indices < height_B)
+        )
+
+        # --- Base Grids Setup ---
+        # Initialize output grids with 0 (no change), but copy over -1 (unknown) from Grid A
+        pos_out_data = np.zeros_like(data_A)
+        pos_out_data[data_A == -1] = -1
         
-        # Calculate proportional confidence (0.0 to 100.0)
-        confidence_score = ((matched_local + matched_global) / total_pixels) * 100.0
+        neg_out_data = np.zeros_like(data_A)
+        neg_out_data[data_A == -1] = -1
 
-        # 6. Convert final masks back to ROS 0-100 format
-        pos_data = np.where(pos_clean > 0, 100, 0).astype(np.int8).flatten().tolist()
-        neg_data = np.where(neg_clean > 0, 100, 0).astype(np.int8).flatten().tolist()
+        # Extract overlapping valid pixels from both grids
+        valid_A_pixels = data_A[valid_mask]
+        valid_B_pixels = data_B[y_B_indices[valid_mask], x_B_indices[valid_mask]]
 
-        # 7. Publish
-        self.publish_map(self.positive_pub, local_msg, pos_data, 0.06)
-        self.publish_map(self.negative_pub, local_msg, neg_data, 0.07)
+        # Only process cells where BOTH grids have known data
+        calc_mask = (valid_A_pixels != -1) & (valid_B_pixels != -1)
 
-        # Publish Confidence
-        conf_msg = Float32()
-        conf_msg.data = float(confidence_score)
-        self.confidence_pub.publish(conf_msg)
+        # Convert to int16 to prevent overflow during subtraction
+        calc_A = valid_A_pixels[calc_mask].astype(np.int16)
+        calc_B = valid_B_pixels[calc_mask].astype(np.int16)
 
+        # Perform the raw subtraction: Simplified - Inflated
+        diff = calc_A - calc_B
 
-    def publish_map(self, publisher, reference_msg, data_array, z_offset):
-        msg = OccupancyGrid()
-        msg.header = reference_msg.header
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.info = reference_msg.info
+        # --- Isolate Positive and Negative Changes ---
+        # Positive change: diff > 0. Otherwise 0.
+        pos_values = np.where(diff > 0, diff, 0).astype(np.int8)
         
-        msg.info.origin.position.z = z_offset 
-        msg.data = data_array
-        publisher.publish(msg)
+        # Negative change: diff < 0. Convert to positive magnitude [0, 100].
+        neg_values = np.where(diff < 0, -diff, 0).astype(np.int8)
 
+        # Prepare sub-arrays for the overlapping region
+        overlap_pos = np.zeros_like(valid_A_pixels)
+        overlap_pos[valid_A_pixels == -1] = -1 # Keep unknowns
+        overlap_pos[calc_mask] = pos_values
+        
+        overlap_neg = np.zeros_like(valid_A_pixels)
+        overlap_neg[valid_A_pixels == -1] = -1 # Keep unknowns
+        overlap_neg[calc_mask] = neg_values
 
-def main():
-    rclpy.init()
-    node = ClusterChangeDetector()
+        # Inject the isolated overlap data back into the full-sized grids
+        pos_out_data[valid_mask] = overlap_pos
+        neg_out_data[valid_mask] = overlap_neg
+
+        # --- Publish Positive Changes ---
+        pos_msg = OccupancyGrid()
+        pos_msg.header = simplified_msg.header
+        pos_msg.info = simplified_msg.info
+        pos_msg.data = pos_out_data.flatten().tolist()
+        self.pos_pub.publish(pos_msg)
+
+        # --- Publish Negative Changes ---
+        neg_msg = OccupancyGrid()
+        neg_msg.header = simplified_msg.header
+        neg_msg.info = simplified_msg.info
+        neg_msg.data = neg_out_data.flatten().tolist()
+        self.neg_pub.publish(neg_msg)
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = CostmapChangeDetector()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -136,7 +152,6 @@ def main():
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

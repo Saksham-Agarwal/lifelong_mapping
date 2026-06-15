@@ -16,7 +16,7 @@ class CostmapCrossCorrelator(Node):
         self.global_sub = message_filters.Subscriber(
             self, 
             OccupancyGrid, 
-            '/robot_local_region'
+            '/inflated_local_region'
         )
         self.local_sub = message_filters.Subscriber(
             self, 
