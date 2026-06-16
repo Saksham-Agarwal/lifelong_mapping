@@ -15,9 +15,9 @@ class MinimalSubscriber(Node):
             'amcl_pose',
             self.listener_callback,
             10)
-        self.subscription  # prevent unused variable warning
+        self.subscription 
 
-        # self.msg = None
+        self.get_logger().info("AMCL Confidence Subscriber Node has been started.")
     def listener_callback(self, msg):
         
         
@@ -32,9 +32,6 @@ def main(args=None):
 
     rclpy.spin(minimal_subscriber)
 
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
     minimal_subscriber.destroy_node()
     rclpy.shutdown()
 
