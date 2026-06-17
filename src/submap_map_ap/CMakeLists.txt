@@ -13,6 +13,7 @@ install(PROGRAMS
   src/scan_to_costmap_generator.py
   src/local_region_inflated_map.py
   src/nearest_neighbour_check.py
+  src/cluster_labelers.py
   src/unexplored_to_free_space.py
   DESTINATION lib/${PROJECT_NAME}
 )
