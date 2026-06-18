@@ -21,13 +21,13 @@ class GeneralMapObjectDetector(Node):
         )
 
         self.subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
-        self.data_publisher = self.create_publisher(Detection2DArray, '/detected_map_objects', 10)
-        self.marker_publisher = self.create_publisher(MarkerArray, '/detected_map_markers', 10)
+        self.data_publisher = self.create_publisher(Detection2DArray, '/detected_map_objects', map_qos)
+        self.marker_publisher = self.create_publisher(MarkerArray, '/detected_map_markers', map_qos)
         
         self.get_logger().info("Detector ready. Using RETR_LIST to find all unexplored clusters.")
 
     def map_callback(self, msg):
-        self.get_logger().info("Processing new map matrix...")
+        self.get_logger().info("eProcessing new map matrix...")
         
         width = msg.info.width
         height = msg.info.height
