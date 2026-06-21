@@ -15,6 +15,12 @@ install(PROGRAMS
   src/nearest_neighbour_check.py
   src/cluster_labelers.py
   src/unexplored_to_free_space.py
+  src/amcl_confidence.py
+  src/change_labeler.py
+  src/grid_spatial.py
+  src/robot_grid_tracker.py
+  src/tracked_map_changes.py
+  src/global_memory_visualiser.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -34,6 +40,10 @@ install(DIRECTORY rviz
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY params
+  DESTINATION share/${PROJECT_NAME}
+)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclpy REQUIRED)
@@ -46,6 +56,18 @@ find_package(tf2_ros REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 
+
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/GridObjectList.msg"
+  "msg/MapGridSummary.msg"
+  "msg/GridBounds.msg"           
+  "msg/MapGridDefinition.msg"  
+  "msg/ChangeObject.msg"
+  "msg/ChangeList.msg"
+  DEPENDENCIES std_msgs
+)
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights

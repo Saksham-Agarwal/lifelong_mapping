@@ -21,7 +21,7 @@ class LocalCostmapSimplifier(Node):
 
         self.create_subscription(
             OccupancyGrid,
-            '/local_costmap/costmap',
+            '/costmap/costmap',
             self.costmap_callback,
             map_qos
         )
