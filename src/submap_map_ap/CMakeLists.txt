@@ -20,7 +20,7 @@ install(PROGRAMS
   src/grid_spatial.py
   src/robot_grid_tracker.py
   src/tracked_map_changes.py
-
+  src/global_memory_visualiser.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
