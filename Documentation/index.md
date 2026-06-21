@@ -17,6 +17,8 @@ The detailed description of all published topics and their purpose can be found 
 
 * [Topics Documentation](docs/topics.md)
 * [Nav2 Params Documentation](docs/params.md)
+* [Confidence Parameter](docs/confidence.md)
+
 
 ## Project Workflow
 

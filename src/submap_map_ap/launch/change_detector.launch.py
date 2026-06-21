@@ -39,14 +39,14 @@ def generate_launch_description():
             output='screen'
         ),
         
-        # 3. Cross-correlates and aligns the maps
-        Node(
-            package=pkg_name,
-            executable='costmap_aligner.py',
-            name='costmap_cross_correlator',
-            output='screen',
-            parameters=[{'use_sim_time': True}] # <-- Add this line to your 3 custom nodes
-        ),
+        # # 3. Cross-correlates and aligns the maps
+        # Node(
+        #     package=pkg_name,
+        #     executable='costmap_aligner.py',
+        #     name='costmap_cross_correlator',
+        #     output='screen',
+        #     parameters=[{'use_sim_time': True}] # <-- Add this line to your 3 custom nodes
+        # ),
 
         # 4. Inflated the local_region map of the bot using cv2
         Node(

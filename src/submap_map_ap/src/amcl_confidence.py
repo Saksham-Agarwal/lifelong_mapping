@@ -37,9 +37,9 @@ class MinimalSubscriber(Node):
         angle_uncertainty = msg.pose.covariance[35]
         total_uncertainty = pose_uncertainty + k * angle_uncertainty
                 
-        self.get_logger().info('pose : "%s"' % pose_uncertainty)
-        self.get_logger().info('angle  : "%s"' % angle_uncertainty)
-        self.get_logger().info('total: "%s"' % total_uncertainty)
+        # self.get_logger().info('pose : "%s"' % pose_uncertainty)
+        # self.get_logger().info('angle  : "%s"' % angle_uncertainty)
+        # self.get_logger().info('total: "%s"' % total_uncertainty)
         
         self.confidence = math.exp(-total_uncertainty)  
         self.pub.publish(Float32(data=self.confidence))
