@@ -6,6 +6,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 install(PROGRAMS
+  src/bridge.py
   src/costmap_generator.py
   src/local_costmap_simplifier.py
   src/costmap_aligner.py

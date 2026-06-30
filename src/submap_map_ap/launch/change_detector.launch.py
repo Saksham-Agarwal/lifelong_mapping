@@ -23,6 +23,12 @@ def generate_launch_description():
     )
     
     return LaunchDescription([
+        Node(
+            package=pkg_name,
+            executable='bridge.py',
+            name='qos_bridge',
+            output='screen'
+        ),
         # 1. Generates the global map crop
         Node(
             package=pkg_name,
@@ -94,6 +100,7 @@ def generate_launch_description():
             parameters=[params_file]
         ),
 
+
         # --- THE DEDICATED LIFECYCLE MANAGER ---
         Node(
             package='nav2_lifecycle_manager',
@@ -102,7 +109,7 @@ def generate_launch_description():
             output='screen',
             parameters=[
                 {'autostart': True},
-                {'node_names': ['costmap/costmap']},
+                {'node_names': ['custom_costmap']},
                 {'bond_timeout': 0.0}
             ]
         ),

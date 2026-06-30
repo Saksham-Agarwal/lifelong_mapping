@@ -35,7 +35,7 @@ class CostmapNeighbourFilter(Node):
         self.latest_inflated_msg = None
         
         # 40 cm radius at 5cm/block resolution = 8 blocks
-        self.declare_parameter('search_radius_cells', 8.0)
+        self.declare_parameter('search_radius_cells', 2.0)
 
         self.get_logger().info("Costmap Neighbour Filter Node has been started.")
 
@@ -69,8 +69,8 @@ class CostmapNeighbourFilter(Node):
         data_B = np.array(inflated_msg.data, dtype=np.int8).reshape((h_B, w_B))
 
         # --- 1. Distance Transform on Inflated Map ---
-        # Treat values >= 90 as lethal obstacles (0 for cv2, 255 for free space)
-        binary_inflated = np.where(data_B >= 90, 0, 255).astype(np.uint8)
+        # Treat values >= 80 as lethal obstacles (0 for cv2, 255 for free space)
+        binary_inflated = np.where(data_B >= 80, 0, 255).astype(np.uint8)
         
         # Calculate distance in pixels to the nearest 0 (obstacle)
         dist_map = cv2.distanceTransform(binary_inflated, cv2.DIST_L2, 5)
@@ -96,7 +96,7 @@ class CostmapNeighbourFilter(Node):
         # Look up the distance to the nearest obstacle for every mapped point
         mapped_distances = dist_map[y_B_indices[valid_mask], x_B_indices[valid_mask]]
 
-        # Mask where mapped points are within the 8-block radius (too close)
+        # Mask where mapped points are within the 2-block radius (too close)
         too_close_mask = mapped_distances <= radius_cells
 
         # Create a full-size boolean mask for out_data

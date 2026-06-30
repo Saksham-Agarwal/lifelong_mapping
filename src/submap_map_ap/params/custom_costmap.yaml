@@ -4,7 +4,7 @@
     publish_frequency: 2.0
     global_frame: map
     robot_base_frame: base_link
-    use_sim_time: True
+    use_sim_time: False
     rolling_window: true
     always_send_full_costmap: True
     width: 5     # Expanded from 3 to 5
@@ -22,7 +22,7 @@
       enabled: True
       observation_sources: scan
       scan:
-        topic: /scan
+        topic: /scan_reliable
         max_obstacle_height: 2.0
         clearing: True
         marking: True
