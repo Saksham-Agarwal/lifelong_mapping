@@ -44,6 +44,9 @@ install(DIRECTORY params
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(DIRECTORY world
+  DESTINATION share/${PROJECT_NAME}
+)
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclpy REQUIRED)
