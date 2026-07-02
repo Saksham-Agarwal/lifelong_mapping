@@ -14,8 +14,8 @@ class LocalMapInflater(Node):
 
         # 1. Declare Parameters (Tune these for your specific rover chassis)
         self.declare_parameter('inscribed_radius_m', 0.1)  # Physical radius of the rover
-        self.declare_parameter('inflation_radius_m', 0.24)  # Max distance to inflate
-        self.declare_parameter('cost_scaling_factor', 1.0) # Steepness of the cost drop-off
+        self.declare_parameter('inflation_radius_m', 0.15)  # Max distance to inflate
+        self.declare_parameter('cost_scaling_factor', 4.0) # Steepness of the cost drop-off
 
         # 2. Setup Subscriber and Publisher
         self.sub = self.create_subscription(
