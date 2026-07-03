@@ -4,11 +4,25 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
+import math
+
+import tf2_ros
+from tf2_ros import TransformException
+
+def get_yaw_from_quaternion(q):
+    """Convert a ROS geometry_msgs Quaternion to Euler Yaw."""
+    siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    return np.arctan2(siny_cosp, cosy_cosp)
 
 class CostmapComparator(Node):
     def __init__(self):
         super().__init__('costmap_comparator')
         
+        # --- TF2 Setup ---
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         # Subscribers
         self.sub_simplified = self.create_subscription(
             OccupancyGrid, '/simplified_local_costmap', self.simplified_cb, 10)
@@ -44,9 +58,10 @@ class CostmapComparator(Node):
         self.grid_robot = msg
 
     def world_to_grid(self, wx, wy, info):
-        """Convert world coordinates to grid indices."""
-        gx = np.floor((wx - info.origin.position.x) / info.resolution).astype(int)
-        gy = np.floor((wy - info.origin.position.y) / info.resolution).astype(int)
+        """Convert world coordinates to grid indices. 
+        Using np.round to prevent floating point grid aliasing."""
+        gx = np.round((wx - info.origin.position.x) / info.resolution).astype(int)
+        gy = np.round((wy - info.origin.position.y) / info.resolution).astype(int)
         return gx, gy
 
     def grid_to_world(self, gx, gy, info):
@@ -58,6 +73,29 @@ class CostmapComparator(Node):
     def process_grids(self):
         if not self.grid_simplified or not self.grid_robot:
             return
+
+        # --- Get the Transform ---
+        frame_simp = self.grid_simplified.header.frame_id
+        frame_rob = self.grid_robot.header.frame_id
+
+        try:
+            # Look up transform FROM robot region frame TO simplified costmap frame
+            t = self.tf_buffer.lookup_transform(
+                frame_simp, 
+                frame_rob, 
+                rclpy.time.Time()
+            )
+        except TransformException as ex:
+            self.get_logger().warn(f'Could not transform {frame_rob} to {frame_simp}: {ex}')
+            return
+
+        # Extract translation and rotation
+        tx = t.transform.translation.x
+        ty = t.transform.translation.y
+        yaw = get_yaw_from_quaternion(t.transform.rotation)
+
+        cos_yaw = math.cos(yaw)
+        sin_yaw = math.sin(yaw)
 
         # 1. Extract data and info
         info_simp = self.grid_simplified.info
@@ -76,11 +114,16 @@ class CostmapComparator(Node):
             self.publish_grid(out_data, info_simp, self.grid_simplified.header.frame_id)
             return
 
-        # 3. Convert these indices to world coordinates
-        wx, wy = self.grid_to_world(gx_rob, gy_rob, info_rob)
+        # 3. Convert these indices to world coordinates (Relative to frame_rob)
+        wx_rob, wy_rob = self.grid_to_world(gx_rob, gy_rob, info_rob)
 
-        # 4. Map world coordinates to the smaller /simplified_local_costmap indices
-        gx_simp, gy_simp = self.world_to_grid(wx, wy, info_simp)
+        # --- NEW: Apply TF Rotation and Translation ---
+        # 3.5 Convert world coords from frame_rob to frame_simp
+        wx_simp = (wx_rob * cos_yaw) - (wy_rob * sin_yaw) + tx
+        wy_simp = (wx_rob * sin_yaw) + (wy_rob * cos_yaw) + ty
+
+        # 4. Map the newly transformed world coordinates to the smaller /simplified_local_costmap indices
+        gx_simp, gy_simp = self.world_to_grid(wx_simp, wy_simp, info_simp)
 
         # 5. Filter bounds to ensure we only look at points that actually fall inside the smaller map
         valid_simp_mask = (gx_simp >= 0) & (gx_simp < info_simp.width) & \

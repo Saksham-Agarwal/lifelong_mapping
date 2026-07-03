@@ -22,6 +22,7 @@ install(PROGRAMS
   src/tracked_map_changes.py
   src/change_tracker.py
   src/global_memory_visualiser.py
+  src/orb_match.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

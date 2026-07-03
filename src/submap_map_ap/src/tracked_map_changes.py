@@ -67,8 +67,8 @@ class DynamicChangeTracker(Node):
 
         # --- NEW: AMCL Safety Variables ---
         self.current_amcl_confidence = 1
-        self.tracking_threshold = 0.7
-        self.lost_threshold = 0.4
+        self.tracking_threshold = 0.9
+        self.lost_threshold = 0.7
         self.is_lost_lockdown = False
 
         self.timer = self.create_timer(0.1, self.process_state)
