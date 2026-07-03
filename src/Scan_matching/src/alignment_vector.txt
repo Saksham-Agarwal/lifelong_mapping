@@ -1,0 +1,3 @@
+Alignment Vector (Offset from Local Region to Costmap Origin):
+Delta X: 7.756000012293457 meters
+Delta Y: 4.649999918416139 meters
