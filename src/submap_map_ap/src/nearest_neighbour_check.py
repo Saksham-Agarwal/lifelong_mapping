@@ -35,7 +35,7 @@ class CostmapNeighbourFilter(Node):
         self.latest_inflated_msg = None
         
         # 40 cm radius at 5cm/block resolution = 8 blocks
-        self.declare_parameter('search_radius_cells', 8.0)
+        self.declare_parameter('search_radius_cells', 2.0)
 
         self.get_logger().info("Costmap Neighbour Filter Node has been started.")
 
@@ -60,6 +60,7 @@ class CostmapNeighbourFilter(Node):
         h_A = change_msg.info.height
         data_A = np.array(change_msg.data, dtype=np.int8).reshape((h_A, w_A))
 
+        data_A[data_A == -1] = 0  
         # --- Extract Grid B (Inflated Map) ---
         res_B = inflated_msg.info.resolution
         orig_B_x = inflated_msg.info.origin.position.x
@@ -70,7 +71,7 @@ class CostmapNeighbourFilter(Node):
 
         # --- 1. Distance Transform on Inflated Map ---
         # Treat values >= 90 as lethal obstacles (0 for cv2, 255 for free space)
-        binary_inflated = np.where(data_B >= 90, 0, 255).astype(np.uint8)
+        binary_inflated = np.where(data_B >= 80,0, 255).astype(np.uint8)
         
         # Calculate distance in pixels to the nearest 0 (obstacle)
         dist_map = cv2.distanceTransform(binary_inflated, cv2.DIST_L2, 5)
