@@ -5,9 +5,6 @@ import os
 import math
 from scipy.spatial import KDTree
 
-# ==========================================
-# 1. MATHEMATICAL HELPER FUNCTIONS
-# ==========================================
 def skewd(p):
     return np.array([-p[1], p[0]])
 
@@ -23,11 +20,8 @@ def compute_target_covariances(points, k=5):
     for pt in points:
         _, idxs = tree.query(pt, k=k)
         neighbors = points[idxs]
-        if len(neighbors) > 1:
-            cov = np.cov(neighbors[:, :2], rowvar=False)
-        else:
-            cov = np.eye(2) * 1e-3
-        cov += np.eye(2) * 1e-5  # Prevent singular matrices
+        cov = np.cov(neighbors[:, :2], rowvar=False) if len(neighbors) > 1 else np.eye(2) * 1e-3
+        cov += np.eye(2) * 1e-5
         covs.append(cov)
     return np.array(covs)
 
@@ -36,15 +30,11 @@ def transform_points(trans_mat, points):
     transformed = np.dot(trans_mat, homogenous_pts.T).T
     return transformed[:, :2]
 
-# ==========================================
-# 2. THE STRICT NDT ALGORITHM 
-# ==========================================
 def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
     max_iter_num = 15
     scan_step = 1       
     epsilon = 1e-4
     damping = 1e-5
-    
     kdtree = KDTree(target_points)
     
     for iter_num in range(max_iter_num):
@@ -60,17 +50,11 @@ def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
             query = [transformed_point[0], transformed_point[1]]
             
             dist, idx = kdtree.query(query)
-            
-            # --- THE MAGIC CUTOFF ---
             if dist > 0.3:
                 continue
             
             tuning_constant = 0.15
-            if dist <= tuning_constant:
-                weight = 1.0
-            else:
-                weight = tuning_constant / dist
-
+            weight = 1.0 if dist <= tuning_constant else tuning_constant / dist
             target = target_points[idx]
             
             C = np.eye(3)
@@ -85,7 +69,6 @@ def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
             error_sum += math.sqrt(error[0]*error[0] + error[1]*error[1] + error[2]*error[2])
             
             v = np.dot(R, skewd(source_points[i]))
-            
             J = np.zeros((3, 3))
             J[0:2, 0:2] = -R
             J[0, 2] = -v[0] 
@@ -105,62 +88,80 @@ def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
         try:
             delta = np.linalg.solve(H, -b)
         except np.linalg.LinAlgError:
-            print("Singular matrix encountered. Stopping iterations.")
             break
             
         update = np.dot(delta, delta)
         trans_mat = np.dot(trans_mat, expmap(delta))
         
-        print(f"Iteration {iter_num+1}: Error = {error_ave:.4f}, Update = {update:.6f}")
-        
         if update < epsilon:
-            print('NDT scan matching has converged!')
+            print(f'NDT scan matching converged at iteration {iter_num+1}!')
             break
             
     return trans_mat
 
-# ==========================================
-# 3. MAIN EXECUTION & 3-COLUMN VISUALIZATION
-# ==========================================
 def main():
-    if not os.path.exists('local_region.csv') or not os.path.exists('costmap.csv'):
-        print("CSV files not found. Ensure they are in the same directory.")
+    if not os.path.exists('local_region_1.csv') or not os.path.exists('costmap_1.csv'):
+        print("CSV files not found.")
         return
 
-    global_df = pd.read_csv('local_region.csv')
-    local_df = pd.read_csv('costmap.csv')
-
-    target_points = global_df[['x', 'y']].values  # Global Map
-    source_points = local_df[['x', 'y']].values   # Local Map
+    target_points = pd.read_csv('local_region_1.csv')[['x', 'y']].values
+    source_points = pd.read_csv('costmap_1.csv')[['x', 'y']].values
 
     print(f"Loaded {len(target_points)} global points and {len(source_points)} local points.")
 
-    # --- Step 1: Align ---
-    print("\n1. Running NDT for alignment...")
+    # --- 1. Align Maps ---
     target_covs = compute_target_covariances(target_points)
-    initial_trans_mat = np.eye(3) 
-    final_trans_mat = ndt_scan_matching(initial_trans_mat, source_points, target_points, target_covs)
     
-    # Calculate the newly aligned source points for visualization
-    aligned_source_points = transform_points(final_trans_mat, source_points)
+    # The TF listener pre-aligned the CSVs to AMCL's guess. We start at zero-offset.
+    initial_trans_mat = np.eye(3)
+    
+    print("\nRunning NDT for alignment...")
+    drift_mat = ndt_scan_matching(initial_trans_mat, source_points, target_points, target_covs)
+    
+    aligned_source_points = transform_points(drift_mat, source_points)
 
-    # --- Step 2: Crop Global Map (in Aligned Frame) ---
-    print("\n2. Cropping Global Map to Aligned Local Dimensions...")
-    
-    # Get bounding box from the ALIGNED source points
+    # --- 2. Calculate Drift & Corrected Pose ---
+    drift_x = drift_mat[0, 2]
+    drift_y = drift_mat[1, 2]
+    drift_yaw = math.atan2(drift_mat[1, 0], drift_mat[0, 0])
+
+    if os.path.exists('amcl_guess_1.txt'):
+        with open('amcl_guess_1.txt', 'r') as f:
+            lines = f.readlines()
+            amcl_x = float(lines[0].split(':')[1].strip())
+            amcl_y = float(lines[1].split(':')[1].strip())
+            amcl_yaw = float(lines[2].split(':')[1].strip())
+            
+        # Matrix math to find true absolute pose
+        amcl_mat = expmap([amcl_x, amcl_y, amcl_yaw])
+        true_mat = np.dot(drift_mat, amcl_mat)
+        
+        true_x = true_mat[0, 2]
+        true_y = true_mat[1, 2]
+        true_yaw = math.atan2(true_mat[1, 0], true_mat[0, 0])
+
+        print("\n==================================================")
+        print(f"AMCL POSE DRIFT DETECTED:")
+        print(f"  ΔX   : {drift_x:+.4f} meters")
+        print(f"  ΔY   : {drift_y:+.4f} meters")
+        print(f"  ΔYaw : {drift_yaw:+.4f} radians")
+        print(f"--------------------------------------------------")
+        print(f"RAW AMCL POSE (Initial Guess):")
+        print(f"  X: {amcl_x:.4f}, Y: {amcl_y:.4f}, Yaw: {amcl_yaw:.4f}")
+        print(f"TRUE LOCALIZED ROBOT POSE (Corrected):")
+        print(f"  X: {true_x:.4f}, Y: {true_y:.4f}, Yaw: {true_yaw:.4f}")
+        print("==================================================\n")
+
+    # --- 3. Identify New Obstacles ---
+    print("Identifying unmatched local points...")
     min_x, max_x = np.min(aligned_source_points[:, 0]), np.max(aligned_source_points[:, 0])
     min_y, max_y = np.min(aligned_source_points[:, 1]), np.max(aligned_source_points[:, 1])
 
-    # Crop the target_points (Global Map) directly using a small 0.5m buffer
     buffer = 0.5
     mask_x = (target_points[:, 0] >= min_x - buffer) & (target_points[:, 0] <= max_x + buffer)
     mask_y = (target_points[:, 1] >= min_y - buffer) & (target_points[:, 1] <= max_y + buffer)
     cropped_global_points = target_points[mask_x & mask_y]
 
-    # --- Step 3: Difference/Positive Change Check ---
-    print("3. Identifying unmatched local points (Positive Change/New Obstacles)...")
-    
-    # Run the KDTree query safely since both clouds are now in the global frame!
     global_tree = KDTree(cropped_global_points)
     distances, _ = global_tree.query(aligned_source_points)
 
@@ -169,25 +170,22 @@ def main():
 
     unmatched_local_points = aligned_source_points[unmatched_mask]
     matched_local_points = aligned_source_points[~unmatched_mask]
-    print(f"Identified {len(unmatched_local_points)} new obstacle points.")
 
-    # ==========================================
-    # VISUALIZATION (3 COLUMNS)
-    # ==========================================
+    # --- 4. Plotting ---
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
-    # Column 1: Original
-    axes[0].set_title("1. Original (Drifted State)")
+    # Column 1: AMCL Guess (Pre-aligned by TF saver)
+    axes[0].set_title("1. Initial Guess (AMCL Pose Only)")
     axes[0].scatter(target_points[:, 0], target_points[:, 1], c='gray', s=5, alpha=0.5, label='Global Target')
-    axes[0].scatter(source_points[:, 0], source_points[:, 1], c='red', s=5, alpha=0.8, label='Local Source')
+    axes[0].scatter(source_points[:, 0], source_points[:, 1], c='red', s=5, alpha=0.8, label='AMCL Local Map')
     axes[0].axis('equal')
     axes[0].legend()
     axes[0].grid(True, linestyle='--', alpha=0.5)
 
-    # Column 2: Aligned
-    axes[1].set_title("2. Aligned (Post-NDT)")
+    # Column 2: Aligned via NDT
+    axes[1].set_title("2. Corrected (Post-NDT)")
     axes[1].scatter(target_points[:, 0], target_points[:, 1], c='gray', s=5, alpha=0.5, label='Global Target')
-    axes[1].scatter(aligned_source_points[:, 0], aligned_source_points[:, 1], c='blue', s=5, alpha=0.8, label='Aligned Local')
+    axes[1].scatter(aligned_source_points[:, 0], aligned_source_points[:, 1], c='blue', s=5, alpha=0.8, label='Corrected Local')
     axes[1].axis('equal')
     axes[1].legend()
     axes[1].grid(True, linestyle='--', alpha=0.5)
