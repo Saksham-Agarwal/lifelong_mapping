@@ -1,0 +1,10 @@
+scan_to_scan_filter_chain:
+  ros__parameters:
+    filter1:
+      name: angle_dead_zone
+      type: laser_filters/LaserScanAngularBoundsFilterInPlace
+      params:
+        # Define the start and end angles of your dead zone in radians
+        lower_angle: 2.44346 # -45 degrees
+        upper_angle: -2.44346  # +45 degrees
+

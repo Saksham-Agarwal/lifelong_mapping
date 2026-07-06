@@ -7,8 +7,8 @@
     use_sim_time: False
     rolling_window: true
     always_send_full_costmap: True
-    width: 5     # Expanded from 3 to 5
-    height: 5   # Expanded from 3 to 5
+    width: 7     # Expanded from 3 to 5
+    height: 7   # Expanded from 3 to 5
     resolution: 0.05
     robot_radius: 0.05
     track_unknown_space: true

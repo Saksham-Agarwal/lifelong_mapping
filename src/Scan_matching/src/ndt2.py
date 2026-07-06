@@ -5,6 +5,17 @@ import os
 import math
 from scipy.spatial import KDTree
 
+# ==========================================
+# CONFIGURATION PARAMETERS
+# Change these filenames as needed for different test runs
+# ==========================================
+GLOBAL_MAP_FILE = 'local_region_10.csv'
+LOCAL_MAP_FILE = 'costmap_10.csv'
+AMCL_GUESS_FILE = 'amcl_guess_10.txt'
+
+# ==========================================
+# 1. MATHEMATICAL HELPER FUNCTIONS
+# ==========================================
 def skewd(p):
     return np.array([-p[1], p[0]])
 
@@ -30,6 +41,9 @@ def transform_points(trans_mat, points):
     transformed = np.dot(trans_mat, homogenous_pts.T).T
     return transformed[:, :2]
 
+# ==========================================
+# 2. THE STRICT NDT ALGORITHM 
+# ==========================================
 def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
     max_iter_num = 15
     scan_step = 1       
@@ -50,6 +64,8 @@ def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
             query = [transformed_point[0], transformed_point[1]]
             
             dist, idx = kdtree.query(query)
+            
+            # Strict cutoff parameter
             if dist > 0.3:
                 continue
             
@@ -99,15 +115,50 @@ def ndt_scan_matching(trans_mat, source_points, target_points, target_covs):
             
     return trans_mat
 
+# ==========================================
+# 3. VISUALIZATION HELPER
+# ==========================================
+def plot_robot_and_deadspace(ax, x, y, yaw, label="Robot"):
+    """
+    Plots the robot as a circle, a solid line for its forward heading, 
+    and dashed lines representing the boundaries of its 80-degree blind spot.
+    """
+    # 1. Plot Robot Body
+    ax.plot(x, y, 'go', markersize=10, label=label, zorder=10)
+    
+    # 2. Plot Forward Heading (Front of the robot)
+    line_length = 1.2
+    ax.plot([x, x + line_length * math.cos(yaw)], 
+            [y, y + line_length * math.sin(yaw)], 
+            'g-', linewidth=2.5, zorder=10)
+    
+    # 3. Plot Deadspace Boundaries (+140 and -140 degrees)
+    angle_pos = yaw + math.radians(140)
+    angle_neg = yaw - math.radians(140)
+    
+    ax.plot([x, x + line_length * math.cos(angle_pos)], 
+            [y, y + line_length * math.sin(angle_pos)], 
+            'k--', linewidth=1.5, zorder=9, label='Sensor Deadspace Edge')
+    ax.plot([x, x + line_length * math.cos(angle_neg)], 
+            [y, y + line_length * math.sin(angle_neg)], 
+            'k--', linewidth=1.5, zorder=9)
+
+# ==========================================
+# 4. MAIN EXECUTION
+# ==========================================
 def main():
-    if not os.path.exists('local_region_1.csv') or not os.path.exists('costmap_1.csv'):
-        print("CSV files not found.")
+    if not os.path.exists(GLOBAL_MAP_FILE) or not os.path.exists(LOCAL_MAP_FILE):
+        print(f"CSV files not found. Ensure {GLOBAL_MAP_FILE} and {LOCAL_MAP_FILE} are in the directory.")
         return
 
-    target_points = pd.read_csv('local_region_1.csv')[['x', 'y']].values
-    source_points = pd.read_csv('costmap_1.csv')[['x', 'y']].values
+    target_points = pd.read_csv(GLOBAL_MAP_FILE)[['x', 'y']].values
+    source_points = pd.read_csv(LOCAL_MAP_FILE)[['x', 'y']].values
 
     print(f"Loaded {len(target_points)} global points and {len(source_points)} local points.")
+
+    # Initialize variables for the visualization fallback
+    amcl_x, amcl_y, amcl_yaw = 0.0, 0.0, 0.0
+    true_x, true_y, true_yaw = 0.0, 0.0, 0.0
 
     # --- 1. Align Maps ---
     target_covs = compute_target_covariances(target_points)
@@ -125,8 +176,8 @@ def main():
     drift_y = drift_mat[1, 2]
     drift_yaw = math.atan2(drift_mat[1, 0], drift_mat[0, 0])
 
-    if os.path.exists('amcl_guess_1.txt'):
-        with open('amcl_guess_1.txt', 'r') as f:
+    if os.path.exists(AMCL_GUESS_FILE):
+        with open(AMCL_GUESS_FILE, 'r') as f:
             lines = f.readlines()
             amcl_x = float(lines[0].split(':')[1].strip())
             amcl_y = float(lines[1].split(':')[1].strip())
@@ -151,6 +202,8 @@ def main():
         print(f"TRUE LOCALIZED ROBOT POSE (Corrected):")
         print(f"  X: {true_x:.4f}, Y: {true_y:.4f}, Yaw: {true_yaw:.4f}")
         print("==================================================\n")
+    else:
+        print(f"Warning: {AMCL_GUESS_FILE} not found. Visualizer will plot robot at 0,0.")
 
     # --- 3. Identify New Obstacles ---
     print("Identifying unmatched local points...")
@@ -178,6 +231,7 @@ def main():
     axes[0].set_title("1. Initial Guess (AMCL Pose Only)")
     axes[0].scatter(target_points[:, 0], target_points[:, 1], c='gray', s=5, alpha=0.5, label='Global Target')
     axes[0].scatter(source_points[:, 0], source_points[:, 1], c='red', s=5, alpha=0.8, label='AMCL Local Map')
+    plot_robot_and_deadspace(axes[0], amcl_x, amcl_y, amcl_yaw, label='AMCL Robot Pose')
     axes[0].axis('equal')
     axes[0].legend()
     axes[0].grid(True, linestyle='--', alpha=0.5)
@@ -186,6 +240,7 @@ def main():
     axes[1].set_title("2. Corrected (Post-NDT)")
     axes[1].scatter(target_points[:, 0], target_points[:, 1], c='gray', s=5, alpha=0.5, label='Global Target')
     axes[1].scatter(aligned_source_points[:, 0], aligned_source_points[:, 1], c='blue', s=5, alpha=0.8, label='Corrected Local')
+    plot_robot_and_deadspace(axes[1], true_x, true_y, true_yaw, label='True Robot Pose')
     axes[1].axis('equal')
     axes[1].legend()
     axes[1].grid(True, linestyle='--', alpha=0.5)
@@ -195,6 +250,7 @@ def main():
     axes[2].scatter(cropped_global_points[:, 0], cropped_global_points[:, 1], c='gray', s=5, alpha=0.5, label='Cropped Global')
     axes[2].scatter(matched_local_points[:, 0], matched_local_points[:, 1], c='red', s=5, alpha=0.5, label='Matched Local')
     axes[2].scatter(unmatched_local_points[:, 0], unmatched_local_points[:, 1], c='blue', s=15, marker='x', label='Positive Change (New)')
+    plot_robot_and_deadspace(axes[2], true_x, true_y, true_yaw, label='True Robot Pose')
     axes[2].axis('equal')
     axes[2].legend()
     axes[2].grid(True, linestyle='--', alpha=0.5)

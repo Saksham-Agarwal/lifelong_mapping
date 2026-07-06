@@ -83,6 +83,13 @@ pose:
 Alternatively, use the **2D Pose Estimate** tool in RViz.
 
 ---
+```bash
+ros2 run laser_filters scan_to_scan_filter_chain \
+  --ros-args --params-file laser_filter_config.yaml \
+  -r /scan:=/scan_raw \
+  -r /scan_filtered:=/scan_reliable
+
+```
 
 ## 6. Run the Change Detector
 

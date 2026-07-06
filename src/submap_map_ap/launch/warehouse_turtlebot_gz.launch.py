@@ -13,7 +13,7 @@ def generate_launch_description():
     # Update this path to wherever you saved the modified SDF
     # ---------------------------------------------------------
     world_file_path = os.path.join(
-        get_package_share_directory('submap_map_ap'), 'world', 'warehouse_turtlebot.sdf'
+        get_package_share_directory('submap_map_ap'), 'world', 'warehouse.sdf'
     )
     turtlebot3_gazebo_path = get_package_share_directory('turtlebot3_gazebo')
     burger_model_file = os.path.join(
@@ -45,15 +45,27 @@ def generate_launch_description():
         ],
         output='screen'
     )
-
-    # 3. Optional: Bridge /cmd_vel between ROS 2 and Gazebo
-    # Allows you to use standard `ros2 run teleop_twist_keyboard teleop_twist_keyboard`
+    # 3. Bridge topics between ROS 2 and Gazebo
     ros_gz_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
-            '/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist'
+            # Command Velocity (ROS 2 -> Gazebo)
+            '/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist',
+            
+            # Laser Scan (Gazebo -> ROS 2)
+            '/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+            
+            # Odometry (Gazebo -> ROS 2)
+            '/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
+            
+            # TF (Gazebo -> ROS 2)
+            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+            
+            # Simulation Clock (Gazebo -> ROS 2)
+            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'
         ],
+        parameters=[{'use_sim_time': True}],
         output='screen'
     )
 

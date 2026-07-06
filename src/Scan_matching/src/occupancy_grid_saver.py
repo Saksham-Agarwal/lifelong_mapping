@@ -1,11 +1,13 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import Bool
+from geometry_msgs.msg import PoseWithCovarianceStamped
 import csv
 import math
 
-# TF2 Imports
 import tf2_ros
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 
@@ -13,111 +15,148 @@ class DualMapSaver(Node):
     def __init__(self):
         super().__init__('dual_map_saver')
         
-        # TF Listener Setup
+        # TF Setup
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         
-        # Subscriptions
-        self.sub_local = self.create_subscription(
-            OccupancyGrid, '/robot_local_region', self.local_callback, 10)
-        self.sub_costmap = self.create_subscription(
-            OccupancyGrid, '/costmap', self.costmap_callback, 10)
+        # --- MISSING QOS & MAP SUBSCRIBER ADDED BACK ---
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
+        )
         
-        # Store raw messages until we have both and a valid TF
+        # Subscriptions
+        self.sub_local = self.create_subscription(OccupancyGrid, '/robot_local_region', self.local_callback, 10)
+        self.sub_costmap = self.create_subscription(OccupancyGrid, '/costmap', self.costmap_callback, 10)
+        self.sub_amcl = self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.amcl_callback, 10)
+        self.sub_map = self.create_subscription(OccupancyGrid, '/map', self.map_callback, map_qos)
+        self.snap = self.create_subscription(Bool, '/take_snapshot', self.snap_callback, 10)
+        
+        # State variables
         self.local_msg = None
         self.costmap_msg = None
-        self.saved = False
-
-        self.get_logger().info('Waiting for maps and TF Tree data...')
+        self.amcl_msg = None
+        self.map_msg = None  
+        self.take_snapshot = False
+        
+        # Counter to prevent overwriting files on multiple snapshots
+        self.snapshot_count = 0
+        
+        self.get_logger().info('Waiting for maps, AMCL, and global /map bounds. Ready for snapshots!')
 
     def local_callback(self, msg):
-        if not self.local_msg:
-            self.get_logger().info(f'Received /robot_local_region in frame: {msg.header.frame_id}')
-            self.local_msg = msg
-            self.check_and_save()
-
+        self.local_msg = msg
+    
     def costmap_callback(self, msg):
-        if not self.costmap_msg:
-            self.get_logger().info(f'Received /costmap in frame: {msg.header.frame_id}')
-            self.costmap_msg = msg
+        self.costmap_msg = msg
+
+    def amcl_callback(self, msg):
+        self.amcl_msg = msg
+
+    # --- MISSING CALLBACK ADDED BACK ---
+    def map_callback(self, msg):
+        self.map_msg = msg
+
+    def snap_callback(self, msg):  
+        self.take_snapshot = bool(msg.data)
+        # Immediately evaluate when a trigger is received
+        if self.take_snapshot:
             self.check_and_save()
 
     def check_and_save(self):
-        if self.local_msg and self.costmap_msg and not self.saved:
+        # --- MISSING MAP_MSG GUARDRAIL ADDED BACK ---
+        # If the map hasn't loaded yet, warn the user and abort the save attempt
+        if not self.map_msg:
+            self.get_logger().warn('Snapshot triggered, but the global /map has not been received yet. Waiting...')
+            self.take_snapshot = False
+            return
+
+        if self.local_msg and self.costmap_msg and self.amcl_msg and self.take_snapshot:
             target_frame = self.local_msg.header.frame_id
             source_frame = self.costmap_msg.header.frame_id
             
             try:
-                # Ask TF: "How do I get from the costmap's frame to the local region's frame?"
+                # Let TF perfectly align the costmap to the global map based on AMCL
                 trans = self.tf_buffer.lookup_transform(
-                    target_frame, 
-                    source_frame, 
-                    rclpy.time.Time(),
-                    timeout=Duration(seconds=2.0)
-                )
+                    target_frame, source_frame, rclpy.time.Time(), timeout=Duration(seconds=2.0))
             except (LookupException, ConnectivityException, ExtrapolationException) as e:
-                self.get_logger().warn(f'Waiting for TF transform: {e}')
-                return # Don't save yet, wait for the next callback to try again
+                self.get_logger().warn(f'Waiting for TF: {e}')
+                # Reset trigger so it can try again on the next callback if TF fails
+                self.take_snapshot = False 
+                return 
 
-            self.saved = True
-            self.get_logger().info('Transform found! Aligning maps...')
+            self.snapshot_count += 1
             
-            # Extract Global points (Already in target_frame)
+            # Extract and transform points
             local_coords = self.extract_occupied(self.local_msg)
-            
-            # Extract Local points and transform them to match Global
             costmap_coords = self.extract_and_transform(self.costmap_msg, trans)
             
-            # Save CSVs
-            self.save_csv('local_region.csv', local_coords)
-            self.save_csv('costmap.csv', costmap_coords)
-                
-            self.get_logger().info('Success! Saved TF-aligned CSVs. Shutting down.')
-            raise SystemExit
+            # Save files with the counter appended
+            self.save_csv(f'local_region_{self.snapshot_count}.csv', local_coords)
+            self.save_csv(f'costmap_{self.snapshot_count}.csv', costmap_coords)
+            
+            # Save AMCL absolute position for drift calculations in Python
+            amcl_x = self.amcl_msg.pose.pose.position.x
+            amcl_y = self.amcl_msg.pose.pose.position.y
+            q = self.amcl_msg.pose.pose.orientation
+            amcl_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            
+            with open(f'amcl_guess_{self.snapshot_count}.txt', 'w') as f:
+                f.write(f"amcl_x:{amcl_x}\n")
+                f.write(f"amcl_y:{amcl_y}\n")
+                f.write(f"amcl_yaw:{amcl_yaw}\n")
+
+            # 3. Save Global Map Boundaries for the "Blank Map"
+            origin_x = self.map_msg.info.origin.position.x
+            origin_y = self.map_msg.info.origin.position.y
+            width_cells = self.map_msg.info.width
+            height_cells = self.map_msg.info.height
+            resolution = self.map_msg.info.resolution
+            
+            width_meters = width_cells * resolution
+            height_meters = height_cells * resolution
+            
+            with open('map_bounds.txt', 'w') as f:
+                f.write(f"min_x:{origin_x}\n")
+                f.write(f"max_x:{origin_x + width_meters}\n")
+                f.write(f"min_y:{origin_y}\n")
+                f.write(f"max_y:{origin_y + height_meters}\n")
+                f.write(f"width:{width_cells}\n")
+                f.write(f"height:{height_cells}\n")
+                f.write(f"resolution:{resolution}\n")
+            
+            # Reset the trigger so it waits for the next True message
+            self.take_snapshot = False
+            self.get_logger().info(f'Success! Saved snapshot #{self.snapshot_count}.')
 
     def extract_occupied(self, msg):
-        """Extracts X/Y coordinates in the message's native frame."""
         resolution = msg.info.resolution
         width = msg.info.width
         origin_x = msg.info.origin.position.x
         origin_y = msg.info.origin.position.y
-
         coords = []
         for i, cell_value in enumerate(msg.data):
             if cell_value > 30:
                 col = i % width
                 row = i // width
-                world_x = (col * resolution) + origin_x
-                world_y = (row * resolution) + origin_y
-                coords.append((world_x, world_y))
-                
+                coords.append(((col * resolution) + origin_x, (row * resolution) + origin_y))
         return coords
 
     def extract_and_transform(self, msg, trans):
-        """Extracts points and applies the TF rotation/translation to match the global frame."""
         raw_coords = self.extract_occupied(msg)
-        
-        # 1. Extract Translation
         tx = trans.transform.translation.x
         ty = trans.transform.translation.y
-        
-        # 2. Extract Rotation (Convert Quaternion to Yaw)
         q = trans.transform.rotation
-        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
-        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
-        yaw = math.atan2(siny_cosp, cosy_cosp)
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
         
-        cos_y = math.cos(yaw)
-        sin_y = math.sin(yaw)
-        
-        transformed_coords = []
+        transformed = []
         for x, y in raw_coords:
-            # Standard 2D Transformation Math
             new_x = (x * cos_y) - (y * sin_y) + tx
             new_y = (x * sin_y) + (y * cos_y) + ty
-            transformed_coords.append((new_x, new_y))
-            
-        return transformed_coords
+            transformed.append((new_x, new_y))
+        return transformed
 
     def save_csv(self, filename, coords):
         with open(filename, 'w', newline='') as f:
@@ -130,14 +169,11 @@ def main(args=None):
     node = DualMapSaver()
     try:
         rclpy.spin(node)
-    except SystemExit:
-        pass
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        if rclpy.ok(): rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
