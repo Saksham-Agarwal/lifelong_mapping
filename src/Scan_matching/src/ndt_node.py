@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from geometry_msgs.msg import Point
+from std_msgs.msg import Bool
 import numpy as np
 import math
 import os
@@ -36,51 +38,48 @@ def transform_points(trans_mat, points):
     homogenous_pts = np.hstack((points, np.ones((points.shape[0], 1))))
     return np.dot(trans_mat, homogenous_pts.T).T[:, :2]
 
-# ==========================================
-# OCCLUSION FILTERING (Shadow Masking)
-# ==========================================
-def filter_occluded_points(global_points, local_points, rx, ry, angular_res_deg=0.5, margin=0.3):
-    """
-    Removes global points that are 'hidden' behind the laser scan hits.
-    Keeps only the global points the robot has a direct line-of-sight to.
-    """
+def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_res_deg=0.5, margin=0.3):
+    if len(global_points) == 0:
+        return global_points, np.array([])
+        
     angular_res = math.radians(angular_res_deg)
     
-    # 1. Shift points to be relative to the robot's pose
     local_shifted = local_points - np.array([rx, ry])
     global_shifted = global_points - np.array([rx, ry])
     
-    # 2. Convert to Polar Coordinates (r, theta)
     local_angles = np.arctan2(local_shifted[:, 1], local_shifted[:, 0])
     local_radii = np.linalg.norm(local_shifted, axis=1)
     
     global_angles = np.arctan2(global_shifted[:, 1], global_shifted[:, 0])
     global_radii = np.linalg.norm(global_shifted, axis=1)
     
-    # 3. Discretize angles into bins (-pi to pi)
+    # --- UPDATED: 100 DEGREE DEADZONE (Active FOV is now +/- 130 deg) ---
+    rel_global_angles = (global_angles - ryaw + np.pi) % (2 * np.pi) - np.pi
+    deadzone_mask = np.abs(rel_global_angles) > math.radians(130)
+    
     local_bins = np.floor((local_angles + np.pi) / angular_res).astype(int)
     global_bins = np.floor((global_angles + np.pi) / angular_res).astype(int)
     
-    # 4. Find the closest scan hit for each angle bin
     num_bins = int(np.ceil(2 * np.pi / angular_res))
     bin_hit_dist = np.full(num_bins, np.inf)
     np.minimum.at(bin_hit_dist, local_bins, local_radii)
     
-    # 5. Keep global points whose distance is <= the laser hit (plus a small margin for wall thickness)
-    # Anything > bin_hit_dist + margin is in the "shadow" and is irrelevant!
     visible_mask = global_radii <= (bin_hit_dist[global_bins] + margin)
+    final_keep_mask = visible_mask & ~deadzone_mask
     
-    visible_global = global_points[visible_mask]
-    occluded_global = global_points[~visible_mask]
+    visible_global = global_points[final_keep_mask]
+    occluded_global = global_points[~final_keep_mask]
     
     return visible_global, occluded_global
 
 def plot_robot_and_deadspace(ax, x, y, yaw):
     ax.plot(x, y, 'go', markersize=10, zorder=10)
-    line_length = 1.2
+    line_length = 0.5 
     ax.plot([x, x + line_length * math.cos(yaw)], [y, y + line_length * math.sin(yaw)], 'g-', linewidth=2.5, zorder=10)
-    angle_pos = yaw + math.radians(140)
-    angle_neg = yaw - math.radians(140)
+    
+    # --- UPDATED: 100 DEGREE DEADZONE VISUALS (+/- 130 deg) ---
+    angle_pos = yaw + math.radians(130)
+    angle_neg = yaw - math.radians(130)
     ax.plot([x, x + line_length * math.cos(angle_pos)], [y, y + line_length * math.sin(angle_pos)], 'k--', linewidth=1.5, zorder=9)
     ax.plot([x, x + line_length * math.cos(angle_neg)], [y, y + line_length * math.sin(angle_neg)], 'k--', linewidth=1.5, zorder=9)
 
@@ -92,9 +91,16 @@ class NDTNode(Node):
         
         latching_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.map_bounds = None
+        
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_snapshot = self.create_subscription(MapSnapshot, '/map_snapshot_data', self.snapshot_callback, 10)
+        
         self.pub_update = self.create_publisher(MapUpdate, '/map_changes', 10)
+        self.pub_sanity = self.create_publisher(Bool, '/sanity_ndt', 10)
+        
+        self.sanity_dist_thresh = 0.6  
+        self.sanity_yaw_thresh = 0.5   
+        
         self.get_logger().info('NDT Node running. Waiting for snapshots...')
 
     def bounds_callback(self, msg):
@@ -105,51 +111,79 @@ class NDTNode(Node):
             self.get_logger().warn('No map bounds yet. Ignoring snapshot.')
             return
             
-        self.get_logger().info('Snapshot received! Running NDT Alignment...')
+        self.get_logger().info('Snapshot received! Cropping scan data and aligning...')
         
         target_points = np.array([[p.x, p.y] for p in msg.global_points])
-        source_points = np.array([[p.x, p.y] for p in msg.local_points])
-        if len(target_points) == 0 or len(source_points) == 0: return
+        raw_source_points = np.array([[p.x, p.y] for p in msg.local_points])
+        
+        if len(target_points) == 0 or len(raw_source_points) == 0: 
+            return
+
+        amcl_x, amcl_y = msg.amcl_x, msg.amcl_y
+        bbox_mask_x = (raw_source_points[:, 0] >= amcl_x - 3.0) & (raw_source_points[:, 0] <= amcl_x + 3.0)
+        bbox_mask_y = (raw_source_points[:, 1] >= amcl_y - 3.0) & (raw_source_points[:, 1] <= amcl_y + 3.0)
+        source_points = raw_source_points[bbox_mask_x & bbox_mask_y]
+
+        if len(source_points) == 0:
+            return
 
         target_covs = compute_target_covariances(target_points)
         initial_trans_mat = np.eye(3)
         drift_mat = self.ndt_scan_matching(initial_trans_mat, source_points, target_points, target_covs)
+        
         aligned_source_points = transform_points(drift_mat, source_points)
 
-        # Pose & Drift Calculations
         amcl_mat = expmap([msg.amcl_x, msg.amcl_y, msg.amcl_yaw])
         true_mat = np.dot(drift_mat, amcl_mat)
+        
         true_x, true_y = true_mat[0, 2], true_mat[1, 2]
         true_yaw = math.atan2(true_mat[1, 0], true_mat[0, 0])
-        drift_x, drift_y = drift_mat[0, 2], drift_mat[1, 2]
-        drift_yaw = math.atan2(drift_mat[1, 0], drift_mat[0, 0])
-
-        # --- 1. OCCLUSION FILTERING ---
-        visible_global, occluded_global = filter_occluded_points(
-            target_points, aligned_source_points, true_x, true_y
-        )
-        self.get_logger().info(f'Occlusion Filter stripped away {len(occluded_global)} irrelevant background points.')
-
-        # --- 2. CHANGE DETECTION ---
-        # Positive change (New Obstacles): Local points with no global match
-        global_tree = KDTree(target_points) 
-        distances_pos, _ = global_tree.query(aligned_source_points)
-        unmatched_local_points = aligned_source_points[distances_pos > 0.2]
         
-        # Negative change (Removed Obstacles): Visible global points with no local match
-        local_tree = KDTree(aligned_source_points)
-        distances_neg, _ = local_tree.query(visible_global)
-        missing_global_points = visible_global[distances_neg > 0.2]
+        dx = true_x - msg.amcl_x
+        dy = true_y - msg.amcl_y
+        dyaw = math.atan2(math.sin(true_yaw - msg.amcl_yaw), math.cos(true_yaw - msg.amcl_yaw))
+        
+        drift_distance = math.hypot(dx, dy)
 
-        self.get_logger().info(f'Changes: {len(unmatched_local_points)} Positive, {len(missing_global_points)} Negative.')
+        sanity_msg = Bool()
+        
+        if drift_distance > self.sanity_dist_thresh or abs(dyaw) > self.sanity_yaw_thresh:
+            self.get_logger().warn(f"NDT drifted too far! (Dist: {drift_distance:.2f}m). /sanity_ndt = False. Falling back to AMCL.")
+            sanity_msg.data = False
+            
+            aligned_source_points = source_points
+            true_x, true_y, true_yaw = msg.amcl_x, msg.amcl_y, msg.amcl_yaw
+            dx, dy, dyaw = 0.0, 0.0, 0.0
+        else:
+            self.get_logger().info("/sanity_ndt = True.")
+            sanity_msg.data = True
+            
+        self.pub_sanity.publish(sanity_msg)
+
+        visible_global, occluded_global = filter_occluded_points(
+            target_points, aligned_source_points, true_x, true_y, true_yaw
+        )
+        
+        if len(visible_global) > 0:
+            global_tree = KDTree(target_points) 
+            distances_pos, _ = global_tree.query(aligned_source_points)
+            unmatched_local_points = aligned_source_points[distances_pos > 0.2]
+            
+            local_tree = KDTree(aligned_source_points)
+            distances_neg, _ = local_tree.query(visible_global)
+            missing_global_points = visible_global[distances_neg > 0.2]
+        else:
+            unmatched_local_points = aligned_source_points
+            missing_global_points = np.array([])
 
         self.publish_changes(unmatched_local_points)
 
         self.save_plot(target_points, source_points, aligned_source_points, 
                        visible_global, occluded_global, unmatched_local_points, missing_global_points,
-                       msg, true_x, true_y, true_yaw, drift_x, drift_y, drift_yaw)
+                       msg, true_x, true_y, true_yaw, dx, dy, dyaw)
 
     def publish_changes(self, new_obstacles):
+        if len(new_obstacles) == 0: return
         update_msg = MapUpdate()
         update_msg.header.stamp = self.get_clock().now().to_msg()
         update_msg.header.frame_id = 'map'
@@ -163,52 +197,49 @@ class NDTNode(Node):
         self.pub_update.publish(update_msg)
 
     def save_plot(self, target, source, aligned, visible_global, occluded_global, positive, negative, msg, tx, ty, tyaw, dx, dy, dyaw):
-        # 4 Columns now! Width increased to 24.
         fig = plt.figure(figsize=(24, 7))
         
+        plt_min_x, plt_max_x = msg.amcl_x - 3.0, msg.amcl_x + 3.0
+        plt_min_y, plt_max_y = msg.amcl_y - 3.0, msg.amcl_y + 3.0
+
+        def format_ax(ax, title):
+            ax.set_title(title)
+            ax.set_xlim(plt_min_x, plt_max_x)
+            ax.set_ylim(plt_min_y, plt_max_y)
+            ax.set_aspect('equal')
+
         ax1 = fig.add_subplot(141)
-        ax1.set_title("1. Initial Guess (AMCL)")
+        format_ax(ax1, "1. Initial Guess (AMCL)")
         ax1.scatter(target[:, 0], target[:, 1], c='gray', s=5, alpha=0.5)
         ax1.scatter(source[:, 0], source[:, 1], c='red', s=5, alpha=0.8)
         plot_robot_and_deadspace(ax1, msg.amcl_x, msg.amcl_y, msg.amcl_yaw)
-        ax1.axis('equal')
 
         ax2 = fig.add_subplot(142)
-        ax2.set_title("2. Corrected (Post-NDT)")
+        format_ax(ax2, "2. Corrected (Post-NDT)")
         ax2.scatter(target[:, 0], target[:, 1], c='gray', s=5, alpha=0.5)
         ax2.scatter(aligned[:, 0], aligned[:, 1], c='blue', s=5, alpha=0.8)
         plot_robot_and_deadspace(ax2, tx, ty, tyaw)
-        ax2.axis('equal')
 
         ax3 = fig.add_subplot(143)
-        ax3.set_title("3. Classified Map Changes")
-        ax3.set_xlim(self.map_bounds.min_x, self.map_bounds.max_x)
-        ax3.set_ylim(self.map_bounds.min_y, self.map_bounds.max_y)
-        # Plot only the visible map in the background
-        ax3.scatter(visible_global[:, 0], visible_global[:, 1], c='gray', s=5, alpha=0.3, label="Visible Map")
+        format_ax(ax3, "3. Classified Map Changes")
+        if len(visible_global) > 0:
+            ax3.scatter(visible_global[:, 0], visible_global[:, 1], c='gray', s=5, alpha=0.3, label="Visible Map")
         if len(positive) > 0:
             ax3.scatter(positive[:, 0], positive[:, 1], c='blue', s=15, marker='x', label="Positive (New)")
         if len(negative) > 0:
             ax3.scatter(negative[:, 0], negative[:, 1], c='orange', s=15, marker='x', label="Negative (Removed)")
         plot_robot_and_deadspace(ax3, tx, ty, tyaw)
-        ax3.set_aspect('equal')
         ax3.legend(loc='upper right')
 
-        # NEW 4TH COLUMN
         ax4 = fig.add_subplot(144)
-        ax4.set_title("4. Occlusion Masking (Shadows)")
-        ax4.set_xlim(self.map_bounds.min_x, self.map_bounds.max_x)
-        ax4.set_ylim(self.map_bounds.min_y, self.map_bounds.max_y)
-        # Show exactly what was kept and what was thrown away
+        format_ax(ax4, "4. Filter Masking (Shadows + Deadzone)")
         if len(occluded_global) > 0:
-            ax4.scatter(occluded_global[:, 0], occluded_global[:, 1], c='black', s=5, alpha=0.15, label="Discarded (Shadow)")
+            ax4.scatter(occluded_global[:, 0], occluded_global[:, 1], c='black', s=5, alpha=0.15, label="Discarded")
         if len(visible_global) > 0:
-            ax4.scatter(visible_global[:, 0], visible_global[:, 1], c='green', s=5, alpha=0.6, label="Kept (Line of Sight)")
+            ax4.scatter(visible_global[:, 0], visible_global[:, 1], c='green', s=5, alpha=0.6, label="Kept")
         plot_robot_and_deadspace(ax4, tx, ty, tyaw)
-        ax4.set_aspect('equal')
         ax4.legend(loc='upper right')
 
-        # Diagnostics Box
         diag_text = (
             f"AMCL Confidence Score     |  {msg.amcl_confidence:.4f}\n"
             f"Initial Pose (AMCL)       |  X: {msg.amcl_x:.4f}m   |   Y: {msg.amcl_y:.4f}m   |   Yaw: {msg.amcl_yaw:.4f}rad\n"

@@ -2,6 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import Float32
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 import numpy as np
 import cv2
@@ -13,6 +14,10 @@ from geometry_msgs.msg import Quaternion
 class ChangeClusterLabeler(Node):
     def __init__(self):
         super().__init__('change_cluster_labeler')
+
+        # Configuration
+        self.amcl_confidence_threshold = 0.85
+        self.current_amcl_confidence = 0.0  # Start at 0 so we don't publish until we get a valid reading
 
         # Standard QoS for OccupancyGrids
         map_qos = QoSProfile(
@@ -28,6 +33,9 @@ class ChangeClusterLabeler(Node):
         self.sub_negative = self.create_subscription(
             OccupancyGrid, '/changes/negative_nearest_neighbour', self.negative_callback, map_qos)
 
+        self.sub_amcl = self.create_subscription(
+            Float32, '/amcl_confidence', self.amcl_callback, 10)
+
         # 2. Publishers
         self.pub_pos_det = self.create_publisher(Detection2DArray, '/cluster_positive', 10)
         self.pub_pos_mark = self.create_publisher(MarkerArray, '/cluster_positive_markers', 10)
@@ -35,9 +43,17 @@ class ChangeClusterLabeler(Node):
         self.pub_neg_det = self.create_publisher(Detection2DArray, '/cluster_negative', 10)
         self.pub_neg_mark = self.create_publisher(MarkerArray, '/cluster_negative_markers', 10)
         
-        self.get_logger().info("Change Labeler initialized and waiting for grids...")
+        self.get_logger().info("Change Labeler initialized and waiting for grids and AMCL confidence...")
+
+    def amcl_callback(self, msg):
+        self.current_amcl_confidence = msg.data
 
     def positive_callback(self, msg):
+        # Threshold Check
+        if self.current_amcl_confidence < self.amcl_confidence_threshold:
+            self.get_logger().debug(f"AMCL confidence ({self.current_amcl_confidence:.2f}) too low. Skipping positive clusters.")
+            return
+
         self.get_logger().info("Processing positive near neighbour grid...")
         # Process all clusters (min 1 cell to avoid purely empty arrays)
         self.process_clusters(msg, min_cells=10, det_pub=self.pub_pos_det, 
@@ -45,6 +61,11 @@ class ChangeClusterLabeler(Node):
                               color=(0.0, 1.0, 0.0, 0.4)) # Green for Positive
 
     def negative_callback(self, msg):
+        # Threshold Check
+        if self.current_amcl_confidence < self.amcl_confidence_threshold:
+            self.get_logger().debug(f"AMCL confidence ({self.current_amcl_confidence:.2f}) too low. Skipping negative clusters.")
+            return
+
         self.get_logger().info("Processing negative nearest neighbour grid...")
         # Process only clusters > 25 cells
         self.process_clusters(msg, min_cells=25, det_pub=self.pub_neg_det, 
