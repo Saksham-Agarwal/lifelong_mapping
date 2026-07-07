@@ -24,7 +24,7 @@ class QosBridge(Node):
         )
         
         # 3. Create the Publisher (Reliable)
-        self.publisher_ = self.create_publisher(LaserScan, '/scan_reliable', reliable_qos)
+        self.publisher_ = self.create_publisher(LaserScan, '/scan_raw', reliable_qos)
         
         self.subscription = self.create_subscription(
             LaserScan, 

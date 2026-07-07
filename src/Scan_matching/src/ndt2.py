@@ -11,7 +11,7 @@ from scipy.spatial import KDTree
 # ==========================================
 GLOBAL_MAP_FILE = 'local_region_10.csv'
 LOCAL_MAP_FILE = 'costmap_10.csv'
-AMCL_GUESS_FILE = 'amcl_guess_10.txt'
+AMCL_GUESS_FILE = 'amcl_guess.txt'
 
 # ==========================================
 # 1. MATHEMATICAL HELPER FUNCTIONS

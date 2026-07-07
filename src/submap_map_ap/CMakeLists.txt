@@ -22,6 +22,9 @@ install(PROGRAMS
   src/robot_grid_tracker.py
   src/tracked_map_changes.py
   src/global_memory_visualiser.py
+  src/map_bounds.py
+  src/snapshot_publisher.py
+  src/snapshot_tracker.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -56,6 +59,7 @@ find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
@@ -70,7 +74,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MapGridDefinition.msg"  
   "msg/ChangeObject.msg"
   "msg/ChangeList.msg"
-  DEPENDENCIES std_msgs
+  "msg/MapSnapshot.msg"
+  "msg/MapBounds.msg"
+  "msg/ClusterChange.msg"
+  "msg/MapUpdate.msg"
+  DEPENDENCIES std_msgs geometry_msgs sensor_msgs
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
