@@ -53,7 +53,6 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     global_angles = np.arctan2(global_shifted[:, 1], global_shifted[:, 0])
     global_radii = np.linalg.norm(global_shifted, axis=1)
     
-    # --- UPDATED: 100 DEGREE DEADZONE (Active FOV is now +/- 130 deg) ---
     rel_global_angles = (global_angles - ryaw + np.pi) % (2 * np.pi) - np.pi
     deadzone_mask = np.abs(rel_global_angles) > math.radians(130)
     
@@ -63,6 +62,10 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     num_bins = int(np.ceil(2 * np.pi / angular_res))
     bin_hit_dist = np.full(num_bins, np.inf)
     np.minimum.at(bin_hit_dist, local_bins, local_radii)
+    
+    # --- MATH FIX: Cap the 'infinity' distance to our 3.0m crop box ---
+    # If a ray doesn't hit anything, it only means space is clear up to our 3m crop limit!
+    bin_hit_dist[bin_hit_dist == np.inf] = 3.0
     
     visible_mask = global_radii <= (bin_hit_dist[global_bins] + margin)
     final_keep_mask = visible_mask & ~deadzone_mask
@@ -76,8 +79,6 @@ def plot_robot_and_deadspace(ax, x, y, yaw):
     ax.plot(x, y, 'go', markersize=10, zorder=10)
     line_length = 0.5 
     ax.plot([x, x + line_length * math.cos(yaw)], [y, y + line_length * math.sin(yaw)], 'g-', linewidth=2.5, zorder=10)
-    
-    # --- UPDATED: 100 DEGREE DEADZONE VISUALS (+/- 130 deg) ---
     angle_pos = yaw + math.radians(130)
     angle_neg = yaw - math.radians(130)
     ax.plot([x, x + line_length * math.cos(angle_pos)], [y, y + line_length * math.sin(angle_pos)], 'k--', linewidth=1.5, zorder=9)
@@ -111,20 +112,26 @@ class NDTNode(Node):
             self.get_logger().warn('No map bounds yet. Ignoring snapshot.')
             return
             
-        self.get_logger().info('Snapshot received! Cropping scan data and aligning...')
+        self.get_logger().info('Snapshot received! Cropping scan and map data...')
         
-        target_points = np.array([[p.x, p.y] for p in msg.global_points])
+        raw_target_points = np.array([[p.x, p.y] for p in msg.global_points])
         raw_source_points = np.array([[p.x, p.y] for p in msg.local_points])
         
-        if len(target_points) == 0 or len(raw_source_points) == 0: 
+        if len(raw_target_points) == 0 or len(raw_source_points) == 0: 
             return
 
         amcl_x, amcl_y = msg.amcl_x, msg.amcl_y
-        bbox_mask_x = (raw_source_points[:, 0] >= amcl_x - 3.0) & (raw_source_points[:, 0] <= amcl_x + 3.0)
-        bbox_mask_y = (raw_source_points[:, 1] >= amcl_y - 3.0) & (raw_source_points[:, 1] <= amcl_y + 3.0)
-        source_points = raw_source_points[bbox_mask_x & bbox_mask_y]
+        
+        # --- FIX: Crop BOTH the laser scan AND the global map to the strict 6x6m box ---
+        bbox_mask_x_src = (raw_source_points[:, 0] >= amcl_x - 3.0) & (raw_source_points[:, 0] <= amcl_x + 3.0)
+        bbox_mask_y_src = (raw_source_points[:, 1] >= amcl_y - 3.0) & (raw_source_points[:, 1] <= amcl_y + 3.0)
+        source_points = raw_source_points[bbox_mask_x_src & bbox_mask_y_src]
 
-        if len(source_points) == 0:
+        bbox_mask_x_tgt = (raw_target_points[:, 0] >= amcl_x - 3.0) & (raw_target_points[:, 0] <= amcl_x + 3.0)
+        bbox_mask_y_tgt = (raw_target_points[:, 1] >= amcl_y - 3.0) & (raw_target_points[:, 1] <= amcl_y + 3.0)
+        target_points = raw_target_points[bbox_mask_x_tgt & bbox_mask_y_tgt]
+
+        if len(source_points) == 0 or len(target_points) == 0:
             return
 
         target_covs = compute_target_covariances(target_points)
@@ -146,10 +153,12 @@ class NDTNode(Node):
         drift_distance = math.hypot(dx, dy)
 
         sanity_msg = Bool()
+        publish_map_updates = True
         
         if drift_distance > self.sanity_dist_thresh or abs(dyaw) > self.sanity_yaw_thresh:
-            self.get_logger().warn(f"NDT drifted too far! (Dist: {drift_distance:.2f}m). /sanity_ndt = False. Falling back to AMCL.")
+            self.get_logger().warn(f"NDT drifted too far! (Dist: {drift_distance:.2f}m). /sanity_ndt = False. Aborting map update.")
             sanity_msg.data = False
+            publish_map_updates = False
             
             aligned_source_points = source_points
             true_x, true_y, true_yaw = msg.amcl_x, msg.amcl_y, msg.amcl_yaw
@@ -176,25 +185,47 @@ class NDTNode(Node):
             unmatched_local_points = aligned_source_points
             missing_global_points = np.array([])
 
-        self.publish_changes(unmatched_local_points)
+        if publish_map_updates:
+            # --- NEW FIX: Strictly enforce 6x6m crop around the final corrected pose ---
+            def strict_crop(pts):
+                if len(pts) == 0: return pts
+                mask = (pts[:, 0] >= true_x - 3.0) & (pts[:, 0] <= true_x + 3.0) & \
+                       (pts[:, 1] >= true_y - 3.0) & (pts[:, 1] <= true_y + 3.0)
+                return pts[mask]
+
+            unmatched_local_points = strict_crop(unmatched_local_points)
+            missing_global_points = strict_crop(missing_global_points)
+            # ---------------------------------------------------------------------------
+
+            self.publish_changes(unmatched_local_points, missing_global_points)
+        else:
+            self.get_logger().warn("Skipping MapUpdate publication due to failed sanity check.")
 
         self.save_plot(target_points, source_points, aligned_source_points, 
                        visible_global, occluded_global, unmatched_local_points, missing_global_points,
                        msg, true_x, true_y, true_yaw, dx, dy, dyaw)
 
-    def publish_changes(self, new_obstacles):
-        if len(new_obstacles) == 0: return
+    def publish_changes(self, new_obstacles, removed_obstacles):
         update_msg = MapUpdate()
         update_msg.header.stamp = self.get_clock().now().to_msg()
         update_msg.header.frame_id = 'map'
         
-        cluster = ClusterChange()
-        cluster.change_type = ClusterChange.POSITIVE_CHANGE
-        for pt in new_obstacles:
-            cluster.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
+        if len(new_obstacles) > 0:
+            cluster_pos = ClusterChange()
+            cluster_pos.change_type = ClusterChange.POSITIVE_CHANGE
+            for pt in new_obstacles:
+                cluster_pos.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
+            update_msg.clusters.append(cluster_pos)
             
-        update_msg.clusters.append(cluster)
-        self.pub_update.publish(update_msg)
+        if len(removed_obstacles) > 0:
+            cluster_neg = ClusterChange()
+            cluster_neg.change_type = ClusterChange.NEGATIVE_CHANGE
+            for pt in removed_obstacles:
+                cluster_neg.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
+            update_msg.clusters.append(cluster_neg)
+
+        if len(update_msg.clusters) > 0:
+            self.pub_update.publish(update_msg)
 
     def save_plot(self, target, source, aligned, visible_global, occluded_global, positive, negative, msg, tx, ty, tyaw, dx, dy, dyaw):
         fig = plt.figure(figsize=(24, 7))
