@@ -54,7 +54,7 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     global_radii = np.linalg.norm(global_shifted, axis=1)
     
     rel_global_angles = (global_angles - ryaw + np.pi) % (2 * np.pi) - np.pi
-    deadzone_mask = np.abs(rel_global_angles) > math.radians(130)
+    deadzone_mask = np.abs(rel_global_angles) > math.radians(60)
     
     local_bins = np.floor((local_angles + np.pi) / angular_res).astype(int)
     global_bins = np.floor((global_angles + np.pi) / angular_res).astype(int)
@@ -65,7 +65,7 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     
     # --- MATH FIX: Cap the 'infinity' distance to our 3.0m crop box ---
     # If a ray doesn't hit anything, it only means space is clear up to our 3m crop limit!
-    bin_hit_dist[bin_hit_dist == np.inf] = 3.0
+    bin_hit_dist[bin_hit_dist == np.inf] = 0.0
     
     visible_mask = global_radii <= (bin_hit_dist[global_bins] + margin)
     final_keep_mask = visible_mask & ~deadzone_mask
@@ -79,8 +79,8 @@ def plot_robot_and_deadspace(ax, x, y, yaw):
     ax.plot(x, y, 'go', markersize=10, zorder=10)
     line_length = 0.5 
     ax.plot([x, x + line_length * math.cos(yaw)], [y, y + line_length * math.sin(yaw)], 'g-', linewidth=2.5, zorder=10)
-    angle_pos = yaw + math.radians(130)
-    angle_neg = yaw - math.radians(130)
+    angle_pos = yaw + math.radians(60)
+    angle_neg = yaw - math.radians(60)
     ax.plot([x, x + line_length * math.cos(angle_pos)], [y, y + line_length * math.sin(angle_pos)], 'k--', linewidth=1.5, zorder=9)
     ax.plot([x, x + line_length * math.cos(angle_neg)], [y, y + line_length * math.sin(angle_neg)], 'k--', linewidth=1.5, zorder=9)
 
