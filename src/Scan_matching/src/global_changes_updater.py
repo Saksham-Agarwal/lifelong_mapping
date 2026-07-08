@@ -15,18 +15,19 @@ class GlobalChangesUpdater(Node):
             depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
         
-        # Subscribe to bounds and the new changes
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_changes = self.create_subscription(MapUpdate, '/map_changes', self.changes_callback, 10)
         
-        # Publish the live updated grid
         self.pub_grid = self.create_publisher(OccupancyGrid, '/overall_changes', latching_qos)
+        
+        # --- NEW: Noise Filtering Threshold ---
+        # Ignore any change cluster with fewer than this many points
+        self.min_cluster_size = 15
         
         self.grid_msg = None
         self.get_logger().info('Global Changes Updater running. Waiting for /map_bounds...')
 
     def bounds_callback(self, msg):
-        # Initialize the blank map based on the real world parameters
         if not self.grid_msg:
             self.grid_msg = OccupancyGrid()
             self.grid_msg.header.frame_id = 'map'
@@ -54,25 +55,30 @@ class GlobalChangesUpdater(Node):
         ox = self.grid_msg.info.origin.position.x
         oy = self.grid_msg.info.origin.position.y
         
-        # Convert tuple back to list to allow mutations
         current_data = list(self.grid_msg.data)
         
         for cluster in msg.clusters:
-            # Right now, we only care about positive changes (new obstacles)
+            # --- NEW: Filter out noise ---
+            if len(cluster.points) < self.min_cluster_size:
+                continue
+                
+            # Determine grid value based on change type
             if cluster.change_type == ClusterChange.POSITIVE_CHANGE:
-                for pt in cluster.points:
-                    
-                    # --- GRID MATH ---
-                    # Convert physical world coordinate (meters) to grid indices (pixels)
-                    col = int((pt.x - ox) / res)
-                    row = int((pt.y - oy) / res)
-                    
-                    # Ensure the point isn't outside the physical map boundaries
-                    if 0 <= col < w and 0 <= row < h:
-                        index = (row * w) + col
-                        current_data[index] = 100  # 100 = Lethal Obstacle
+                grid_value = 100  # Lethal Obstacle
+            elif cluster.change_type == ClusterChange.NEGATIVE_CHANGE:
+                grid_value = -1   # Unknown / Unexplored (Negative Space)
+            else:
+                continue
+
+            # Map the points
+            for pt in cluster.points:
+                col = int((pt.x - ox) / res)
+                row = int((pt.y - oy) / res)
+                
+                if 0 <= col < w and 0 <= row < h:
+                    index = (row * w) + col
+                    current_data[index] = grid_value
                         
-        # Repackage and broadcast the updated map
         self.grid_msg.data = current_data
         self.grid_msg.header.stamp = self.get_clock().now().to_msg()
         self.pub_grid.publish(self.grid_msg)

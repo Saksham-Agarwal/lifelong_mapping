@@ -10,7 +10,7 @@ class MinimalSubscriber(Node):
 
     def __init__(self):
 
-        super().__init__('AMCL_Confidence_subscriber')
+        super().__init__('AMCL_Confidence')
         
         self.declare_parameter('angle_relevance', 0.5)
 

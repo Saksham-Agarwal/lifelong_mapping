@@ -16,7 +16,7 @@
     # inflation_layer:
     #   plugin: "nav2_costmap_2d::InflationLayer"
     #   cost_scaling_factor: 2.0
-    nflation_radius: 0.0
+    #   inflation_radius: 0.0
     obstacle_layer:
       plugin: "nav2_costmap_2d::ObstacleLayer"
       enabled: True

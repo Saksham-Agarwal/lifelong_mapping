@@ -16,7 +16,7 @@ class ChangeClusterLabeler(Node):
         super().__init__('change_cluster_labeler')
 
         # Configuration
-        self.amcl_confidence_threshold = 0.85
+        self.amcl_confidence_threshold = 0.75
         self.current_amcl_confidence = 0.0  # Start at 0 so we don't publish until we get a valid reading
 
         # Standard QoS for OccupancyGrids
