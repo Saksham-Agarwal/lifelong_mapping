@@ -8,6 +8,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32
 from geometry_msgs.msg import PoseWithCovarianceStamped, Point
 import math
+import time  # --- NEW: Added for cooldown tracking ---
 
 import tf2_ros
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
@@ -35,7 +36,10 @@ class SnapshotPublisher(Node):
         self.scan_msg = None
         self.amcl_msg = None
         self.conf_msg = None
-        self.take_snapshot = False
+        
+        # --- NEW: Cooldown tracking variables ---
+        self.last_snap_time = 0.0
+        self.cooldown_seconds = 5.0  # Prevents spamming triggers for 5 seconds
         
         self.get_logger().info('Waiting for map, scan, AMCL, and confidence topics...')
 
@@ -46,15 +50,20 @@ class SnapshotPublisher(Node):
     def conf_callback(self, msg): self.conf_msg = msg
 
     def snap_callback(self, msg):  
-        self.take_snapshot = bool(msg.data)
-        if self.take_snapshot:
-            self.check_and_publish()
+        # --- NEW: Debounce logic using a cooldown timer ---
+        if bool(msg.data):
+            current_time = time.time()
+            if (current_time - self.last_snap_time) > self.cooldown_seconds:
+                self.get_logger().info('Snapshot requested! Processing...')
+                self.last_snap_time = current_time
+                self.check_and_publish()
+            else:
+                # Silently ignore the spam triggers while in cooldown
+                pass
 
     def check_and_publish(self):
-        # --- MODIFIED: Removed self.submap_msg from the strict requirements ---
         if not self.local_msg or not self.scan_msg or not self.amcl_msg or not self.conf_msg:
             self.get_logger().warn('Waiting for core topics (global map, scan, amcl, conf) to arrive...')
-            self.take_snapshot = False
             return
 
         target_frame = self.local_msg.header.frame_id
@@ -65,7 +74,6 @@ class SnapshotPublisher(Node):
                 target_frame, source_frame, rclpy.time.Time(), timeout=Duration(seconds=2.0))
         except (LookupException, ConnectivityException, ExtrapolationException) as e:
             self.get_logger().warn(f'Waiting for TF: {e}')
-            self.take_snapshot = False 
             return 
 
         snap_msg = MapSnapshot()
@@ -82,12 +90,11 @@ class SnapshotPublisher(Node):
         local_coords = self.extract_occupied(self.local_msg)
         scan_coords = self.extract_and_transform_scan(self.scan_msg, trans)
 
-        # --- NEW LOGIC: Use Submap if available, otherwise fallback to Global Map ---
         if self.submap_msg is not None:
             submap_coords = self.extract_occupied(self.submap_msg)
         else:
             self.get_logger().info('Submap not yet published. Falling back to global map.')
-            submap_coords = local_coords  # Just reuse the extracted global coordinates
+            submap_coords = local_coords
 
         # 3. Populate Arrays
         for x, y in local_coords:
@@ -102,7 +109,6 @@ class SnapshotPublisher(Node):
         # 4. Publish
         self.pub_snapshot.publish(snap_msg)
         self.get_logger().info('Success! Snapshot published.')
-        self.take_snapshot = False
 
     def extract_occupied(self, msg):
         res, w, ox, oy = msg.info.resolution, msg.info.width, msg.info.origin.position.x, msg.info.origin.position.y

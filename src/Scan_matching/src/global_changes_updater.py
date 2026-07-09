@@ -22,7 +22,7 @@ class GlobalChangesUpdater(Node):
         
         # --- NEW: Noise Filtering Threshold ---
         # Ignore any change cluster with fewer than this many points
-        self.min_cluster_size = 15
+        self.min_cluster_size = 10
         
         self.grid_msg = None
         self.get_logger().info('Global Changes Updater running. Waiting for /map_bounds...')

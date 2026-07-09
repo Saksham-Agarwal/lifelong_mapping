@@ -50,8 +50,8 @@ def generate_launch_description():
 
     global_change_update_cmd = Node(
         package='Scan_matching',
-        executable='global_change_updater.py',
-        name='global_change_updater',
+        executable='global_changes_updater.py',
+        name='global_changes_updater',
         output='screen'
     )
 

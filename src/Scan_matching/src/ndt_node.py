@@ -64,10 +64,7 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     bin_hit_dist = np.full(num_bins, np.inf)
     np.minimum.at(bin_hit_dist, local_bins, local_radii)
     
-    # --- NEW: Apply a 1D minimum filter to close gaps ---
-    # This acts like a "thickener" for laser hits, stopping rays from leaking through walls
     bin_hit_dist = minimum_filter1d(bin_hit_dist, size=3, mode='wrap')
-    
     bin_hit_dist[bin_hit_dist == np.inf] = 3.0
     
     visible_mask = global_radii <= (bin_hit_dist[global_bins] + margin)
@@ -82,7 +79,6 @@ def plot_robot_and_deadspace(ax, x, y, yaw):
     ax.plot(x, y, 'go', markersize=10, zorder=10)
     line_length = 0.5 
     ax.plot([x, x + line_length * math.cos(yaw)], [y, y + line_length * math.sin(yaw)], 'g-', linewidth=2.5, zorder=10)
-    # --- FIXED: 70 degree plotting limits ---
     angle_pos = yaw + math.radians(70)
     angle_neg = yaw - math.radians(70)
     ax.plot([x, x + line_length * math.cos(angle_pos)], [y, y + line_length * math.sin(angle_pos)], 'k--', linewidth=1.5, zorder=9)
@@ -141,9 +137,38 @@ class NDTNode(Node):
         if len(source_points) == 0:
             return
 
+        # Phase 1: Independent NDT alignment
         global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw)
         submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw)
 
+        # Phase 2: Conflict Resolution
+        if global_res and submap_res and global_res['sanity_ok'] and submap_res['sanity_ok']:
+            dist_diff = math.hypot(submap_res['tx'] - global_res['tx'], submap_res['ty'] - global_res['ty'])
+            yaw_diff = abs(math.atan2(math.sin(submap_res['tyaw'] - global_res['tyaw']), math.cos(submap_res['tyaw'] - global_res['tyaw'])))
+            
+            # High Sensitivity Thresholds
+            dist_thresh = 0.005 # meters
+            yaw_thresh_rad = math.radians(0.002) # degrees to rad
+
+            if dist_diff > dist_thresh or yaw_diff > yaw_thresh_rad:
+                global_err = global_res['pos_ratio'] + global_res['neg_ratio']
+                submap_err = submap_res['pos_ratio'] + submap_res['neg_ratio']
+                
+                if global_err <= submap_err:
+                    self.get_logger().info("Poses diverged. Global map fits better. Forcing Submap to Global pose.")
+                    submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=global_res['drift_mat'])
+                    global_res['status'] = "Winner (Independent)"
+                    submap_res['status'] = "Forced (Aligned to Global)"
+                else:
+                    self.get_logger().info("Poses diverged. Submap fits better. Forcing Global to Submap pose.")
+                    global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=submap_res['drift_mat'])
+                    submap_res['status'] = "Winner (Independent)"
+                    global_res['status'] = "Forced (Aligned to Submap)"
+            else:
+                global_res['status'] = "Independent (Matched Submap)"
+                submap_res['status'] = "Independent (Matched Global)"
+
+        # Phase 3: Publishing
         if submap_res:
             sanity_msg = Bool()
             if not submap_res['sanity_ok']:
@@ -160,9 +185,10 @@ class NDTNode(Node):
             sanity_msg.data = False
             self.pub_sanity.publish(sanity_msg)
 
+        # Phase 4: Visualization
         self.save_plot(source_points, global_points, submap_points, global_res, submap_res, msg)
 
-    def process_ndt_pipeline(self, target_points, source_points, amcl_x, amcl_y, amcl_yaw):
+    def process_ndt_pipeline(self, target_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=None):
         if len(target_points) == 0:
             return None
             
@@ -170,9 +196,13 @@ class NDTNode(Node):
         centered_target = target_points - center
         centered_source = source_points - center
         
-        target_covs = compute_target_covariances(centered_target)
-        initial_trans_mat = np.eye(3)
-        drift_mat = self.ndt_scan_matching(initial_trans_mat, centered_source, centered_target, target_covs)
+        # Calculate or Override Matrix
+        if override_drift_mat is not None:
+            drift_mat = override_drift_mat
+        else:
+            target_covs = compute_target_covariances(centered_target)
+            initial_trans_mat = np.eye(3)
+            drift_mat = self.ndt_scan_matching(initial_trans_mat, centered_source, centered_target, target_covs)
         
         aligned_centered_source = transform_points(drift_mat, centered_source)
         aligned_source_points = aligned_centered_source + center
@@ -222,14 +252,12 @@ class NDTNode(Node):
                 u_shifted = unmatched_local_points - np.array([true_x, true_y])
                 u_angles = np.arctan2(u_shifted[:, 1], u_shifted[:, 0])
                 rel_u_angles = (u_angles - true_yaw + np.pi) % (2 * np.pi) - np.pi
-                # --- FIXED: 70 degree freezone ---
                 u_in_fov = np.abs(rel_u_angles) <= math.radians(70)
                 unmatched_local_points = unmatched_local_points[u_in_fov]
 
         local_shifted = aligned_source_points - np.array([true_x, true_y])
         local_angles = np.arctan2(local_shifted[:, 1], local_shifted[:, 0])
         rel_local_angles = (local_angles - true_yaw + np.pi) % (2 * np.pi) - np.pi
-        # --- FIXED: 70 degree freezone ---
         source_in_fov_mask = np.abs(rel_local_angles) <= math.radians(70)
         freezone_source_points = aligned_source_points[source_in_fov_mask]
         
@@ -241,6 +269,7 @@ class NDTNode(Node):
         neg_ratio = (neg_count / total_scan_freezone * 100) if total_scan_freezone > 0 else 0.0
 
         return {
+            'drift_mat': drift_mat,  # Passed out so it can be forced onto the other map
             'aligned': aligned_source_points,
             'tx': true_x, 'ty': true_y, 'tyaw': true_yaw,
             'dx': dx, 'dy': dy, 'dyaw': dyaw,
@@ -254,7 +283,8 @@ class NDTNode(Node):
             'pos_count': pos_count,
             'neg_count': neg_count,
             'pos_ratio': pos_ratio,
-            'neg_ratio': neg_ratio
+            'neg_ratio': neg_ratio,
+            'status': 'Independent'
         }
 
     def publish_changes(self, new_obstacles, removed_obstacles):
@@ -333,28 +363,28 @@ class NDTNode(Node):
         
         if global_res:
             diag_text += (
-                f"[GLOBAL] Corrected Pose |  X: {global_res['tx']:.4f}m   |   Y: {global_res['ty']:.4f}m   |   Yaw: {global_res['tyaw']:.4f}rad\n"
-                f"[GLOBAL] Drift          |  ΔX: {global_res['dx']:+.4f}m   |   ΔY: {global_res['dy']:+.4f}m   |   ΔYaw: {global_res['dyaw']:+.4f}rad\n"
-                f"[GLOBAL] Freezone Stats |  Total Valid Scan Points: {global_res['total_scan_freezone']}   |   Positive Updates: {global_res['pos_count']} ({global_res['pos_ratio']:.1f}%)   |   Negative Updates: {global_res['neg_count']} ({global_res['neg_ratio']:.1f}%)\n\n"
+                f"[GLOBAL] Alignment Status |  {global_res.get('status', 'N/A')}\n"
+                f"[GLOBAL] Corrected Pose   |  X: {global_res['tx']:.4f}m   |   Y: {global_res['ty']:.4f}m   |   Yaw: {global_res['tyaw']:.4f}rad\n"
+                f"[GLOBAL] Drift            |  ΔX: {global_res['dx']:+.4f}m   |   ΔY: {global_res['dy']:+.4f}m   |   ΔYaw: {global_res['dyaw']:+.4f}rad\n"
+                f"[GLOBAL] Freezone Stats   |  Total Valid Scan Points: {global_res['total_scan_freezone']}   |   Positive Updates: {global_res['pos_count']} ({global_res['pos_ratio']:.1f}%)   |   Negative Updates: {global_res['neg_count']} ({global_res['neg_ratio']:.1f}%)\n\n"
             )
         if submap_res:
             diag_text += (
-                f"[SUBMAP] Corrected Pose |  X: {submap_res['tx']:.4f}m   |   Y: {submap_res['ty']:.4f}m   |   Yaw: {submap_res['tyaw']:.4f}rad\n"
-                f"[SUBMAP] Drift          |  ΔX: {submap_res['dx']:+.4f}m   |   ΔY: {submap_res['dy']:+.4f}m   |   ΔYaw: {submap_res['dyaw']:+.4f}rad\n"
-                f"[SUBMAP] Freezone Stats |  Total Valid Scan Points: {submap_res['total_scan_freezone']}   |   Positive Updates: {submap_res['pos_count']} ({submap_res['pos_ratio']:.1f}%)   |   Negative Updates: {submap_res['neg_count']} ({submap_res['neg_ratio']:.1f}%)"
+                f"[SUBMAP] Alignment Status |  {submap_res.get('status', 'N/A')}\n"
+                f"[SUBMAP] Corrected Pose   |  X: {submap_res['tx']:.4f}m   |   Y: {submap_res['ty']:.4f}m   |   Yaw: {submap_res['tyaw']:.4f}rad\n"
+                f"[SUBMAP] Drift            |  ΔX: {submap_res['dx']:+.4f}m   |   ΔY: {submap_res['dy']:+.4f}m   |   ΔYaw: {submap_res['dyaw']:+.4f}rad\n"
+                f"[SUBMAP] Freezone Stats   |  Total Valid Scan Points: {submap_res['total_scan_freezone']}   |   Positive Updates: {submap_res['pos_count']} ({submap_res['pos_ratio']:.1f}%)   |   Negative Updates: {submap_res['neg_count']} ({submap_res['neg_ratio']:.1f}%)"
             )
 
-        # --- NEW: Difference between Submap and Global Alignments ---
         if global_res and submap_res:
             diff_x = submap_res['tx'] - global_res['tx']
             diff_y = submap_res['ty'] - global_res['ty']
             raw_dyaw = submap_res['tyaw'] - global_res['tyaw']
-            diff_yaw = math.atan2(math.sin(raw_dyaw), math.cos(raw_dyaw)) # Normalize angle difference
+            diff_yaw = math.atan2(math.sin(raw_dyaw), math.cos(raw_dyaw)) 
             diag_text += (
-                f"\n\n[COMPARISON] Submap vs Global Alignment Difference | ΔX: {diff_x:+.4f}m   |   ΔY: {diff_y:+.4f}m   |   ΔYaw: {diff_yaw:+.4f}rad"
+                f"\n\n[FINAL ALIGNMENT DIFFERENCE] ΔX: {diff_x:+.4f}m   |   ΔY: {diff_y:+.4f}m   |   ΔYaw: {diff_yaw:+.4f}rad"
             )
 
-        # Adjusted bottom margin to fit the new text
         fig.text(0.5, 0.05, diag_text, ha='center', va='bottom', fontsize=12, bbox=dict(facecolor='white', alpha=0.8, edgecolor='black', boxstyle='round,pad=0.5'))
         plt.subplots_adjust(bottom=0.28) 
         

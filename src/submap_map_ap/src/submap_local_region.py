@@ -45,10 +45,10 @@ class SubmapLocalRegion(Node):
         self.timer = self.create_timer(0.05, self.process_region) 
 
     def costmap_callback(self, msg):
+        # --- FIXED: Only print this the very first time the map arrives ---
+        if self.costmap is None:
+            self.get_logger().info(f"Received submap map: {msg.info.width}x{msg.info.height}. Local region extraction started.")
         self.costmap = msg
-        self.get_logger().info(
-            f"Received submap map: {msg.info.width}x{msg.info.height}"
-        )
 
     def process_region(self):
         if self.costmap is None:
