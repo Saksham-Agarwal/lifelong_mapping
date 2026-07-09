@@ -65,7 +65,7 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     
     # --- MATH FIX: Cap the 'infinity' distance to our 3.0m crop box ---
     # If a ray doesn't hit anything, it only means space is clear up to our 3m crop limit!
-    bin_hit_dist[bin_hit_dist == np.inf] = 0.0
+    bin_hit_dist[bin_hit_dist == np.inf] = 3.0
     
     visible_mask = global_radii <= (bin_hit_dist[global_bins] + margin)
     final_keep_mask = visible_mask & ~deadzone_mask
