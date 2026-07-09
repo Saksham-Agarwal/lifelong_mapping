@@ -8,20 +8,20 @@ endif()
 install(PROGRAMS
   src/bridge.py
   src/costmap_generator.py
-  src/local_costmap_simplifier.py
-  src/costmap_aligner.py
-  src/costmap_change_detector.py
-  src/scan_to_costmap_generator.py
-  src/local_region_inflated_map.py
-  src/nearest_neighbour_check.py
-  src/cluster_labelers.py
-  src/unexplored_to_free_space.py
+  # src/local_costmap_simplifier.py
+  # src/costmap_aligner.py
+  # src/costmap_change_detector.py
+  # src/scan_to_costmap_generator.py
+  # src/local_region_inflated_map.py
+  # src/nearest_neighbour_check.py
+  # src/cluster_labelers.py
+  # src/unexplored_to_free_space.py
   src/amcl_confidence.py
-  src/change_labeler.py
-  src/grid_spatial.py
-  src/robot_grid_tracker.py
-  src/tracked_map_changes.py
-  src/global_memory_visualiser.py
+  # src/change_labeler.py
+  # src/grid_spatial.py
+  # src/robot_grid_tracker.py
+  # src/tracked_map_changes.py
+  # src/global_memory_visualiser.py
   src/map_bounds.py
   src/snapshot_publisher.py
   src/snapshot_tracker.py

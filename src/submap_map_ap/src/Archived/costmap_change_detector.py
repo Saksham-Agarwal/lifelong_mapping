@@ -42,7 +42,7 @@ class CostmapChangeDetector(Node):
         )
         self.simplified_sub = self.create_subscription(
             OccupancyGrid,
-            '/simplified_local_costmap',
+            '/costmap',
             self.simplified_callback,
             10
         )
