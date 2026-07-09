@@ -26,6 +26,8 @@ install(PROGRAMS
   src/snapshot_publisher.py
   src/snapshot_tracker.py
   src/map_bounds_publisher.py 
+  src/submap.py
+  src/submap_local_region.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

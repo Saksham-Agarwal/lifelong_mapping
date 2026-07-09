@@ -9,3 +9,4 @@ float32 amcl_confidence
 # Extracted Point Clouds
 geometry_msgs/Point[] global_points
 geometry_msgs/Point[] local_points
+geometry_msgs/Point[] submap_points  

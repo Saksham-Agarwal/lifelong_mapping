@@ -34,6 +34,28 @@ def generate_launch_description():
         output='screen'
     )
 
+    submap_node_cmd = Node(
+        package='submap_map_ap',
+        executable='submap.py',
+        name='submap_generator_node',
+        output='screen'
+    )
+
+    submap_local_region_cmd = Node(
+        package='submap_map_ap',
+        executable='submap_local_region.py',
+        name='submap_local_region',
+        output='screen'
+    )
+
+    global_change_update_cmd = Node(
+        package='Scan_matching',
+        executable='global_change_updater.py',
+        name='global_change_updater',
+        output='screen'
+    )
+
+
     # ---------------------------------------------------------
     # Create and Populate Launch Description
     # ---------------------------------------------------------
@@ -43,5 +65,8 @@ def generate_launch_description():
     ld.add_action(snapshot_tracker_cmd)
     ld.add_action(snapshot_publisher_cmd)
     ld.add_action(ndt_node_cmd)
+    ld.add_action(submap_node_cmd)
+    ld.add_action(submap_local_region_cmd)
+    ld.add_action(global_change_update_cmd)
 
     return ld
