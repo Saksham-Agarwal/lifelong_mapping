@@ -90,6 +90,9 @@ class NDTAlignerNode(Node):
         raw_source_points = np.array([[p.x, p.y] for p in msg.local_points])
         
         if len(raw_global_points) == 0 or len(raw_source_points) == 0: return
+        
+        # Calculate raw scan count for accurate percentage math
+        raw_scan_count = len(raw_source_points)
         amcl_x, amcl_y, amcl_yaw = msg.amcl_x, msg.amcl_y, msg.amcl_yaw
         
         def crop_to_bbox(pts, cx, cy, margin=3.0):
@@ -104,9 +107,11 @@ class NDTAlignerNode(Node):
 
         if len(source_points) == 0: return
 
-        global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw)
-        submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw)
+        # Phase 1: Independent NDT alignment (Passing is_submap flag)
+        global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=False)
+        submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=True)
 
+        # Phase 2: Conflict Resolution
         if global_res and submap_res and global_res['sanity_ok'] and submap_res['sanity_ok']:
             dist_diff = math.hypot(submap_res['tx'] - global_res['tx'], submap_res['ty'] - global_res['ty'])
             yaw_diff = abs(math.atan2(math.sin(submap_res['tyaw'] - global_res['tyaw']), math.cos(submap_res['tyaw'] - global_res['tyaw'])))
@@ -116,17 +121,18 @@ class NDTAlignerNode(Node):
                 global_err = global_res['pos_ratio'] + global_res['neg_ratio']
                 submap_err = submap_res['pos_ratio'] + submap_res['neg_ratio']
                 if global_err <= submap_err:
-                    submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=global_res['drift_mat'])
+                    submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=True, override_drift_mat=global_res['drift_mat'])
                     global_res['status'] = "Winner (Independent)"
                     submap_res['status'] = "Forced (Aligned to Global)"
                 else:
-                    global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=submap_res['drift_mat'])
+                    global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=False, override_drift_mat=submap_res['drift_mat'])
                     submap_res['status'] = "Winner (Independent)"
                     global_res['status'] = "Forced (Aligned to Submap)"
             else:
                 global_res['status'] = "Independent (Matched Submap)"
                 submap_res['status'] = "Independent (Matched Global)"
 
+        # Phase 3: Publish changes
         if submap_res and global_res:
             sanity_msg = Bool()
             if not submap_res['sanity_ok']:
@@ -144,7 +150,7 @@ class NDTAlignerNode(Node):
 
         self.publish_debug_data(msg, source_points, global_points, submap_points, global_res, submap_res)
 
-    def process_ndt_pipeline(self, target_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=None):
+    def process_ndt_pipeline(self, target_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=False, override_drift_mat=None):
         if len(target_points) == 0: return None
         center = np.array([amcl_x, amcl_y])
         centered_target = target_points - center
@@ -162,10 +168,8 @@ class NDTAlignerNode(Node):
         true_x, true_y, true_yaw = amcl_x + dx, amcl_y + dy, amcl_yaw + dyaw
         drift_distance = math.hypot(dx, dy)
 
+        # Base Sanity Check
         sanity_ok = not (drift_distance > self.sanity_dist_thresh or abs(dyaw) > self.sanity_yaw_thresh)
-        if not sanity_ok:
-            aligned_source_points, true_x, true_y, true_yaw = source_points, amcl_x, amcl_y, amcl_yaw
-            dx, dy, dyaw = 0.0, 0.0, 0.0
 
         visible_target, occluded_target = filter_occluded_points(target_points, aligned_source_points, true_x, true_y, true_yaw)
         
@@ -191,27 +195,34 @@ class NDTAlignerNode(Node):
                 u_shifted = unmatched_local_points - np.array([true_x, true_y])
                 u_in_fov = np.abs((np.arctan2(u_shifted[:, 1], u_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(70)
                 unmatched_local_points = unmatched_local_points[u_in_fov]
-
-        local_shifted = aligned_source_points - np.array([true_x, true_y])
-        source_in_fov_mask = np.abs((np.arctan2(local_shifted[:, 1], local_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(70)
-        freezone_source_points = aligned_source_points[source_in_fov_mask]
         
-        # --- NEW METRICS & SANITY LOGIC ---
-        
-        # Total number of scan data points (used for the real percentage)
-        total_scan_data = len(aligned_source_points) 
-        
+        # --- CALCULATE RATIOS ---
         pos_count = len(unmatched_local_points)
         neg_count = len(missing_target_points)
         
-        # Correctly divide by the total scan data
-        pos_ratio = (pos_count / total_scan_data * 100) if total_scan_data > 0 else 0.0
-        neg_ratio = (neg_count / total_scan_data * 100) if total_scan_data > 0 else 0.0
+        pos_ratio = (pos_count / raw_scan_count * 100) if raw_scan_count > 0 else 0.0
+        
+        total_map_points_in_box = len(target_points)
+        neg_ratio = (neg_count / total_map_points_in_box * 100) if total_map_points_in_box > 0 else 0.0
 
-        # Dynamic Sanity Check: If over 50% of the map has changed, the robot is likely lost or in a completely new environment. Fail NDT.
-        if sanity_ok and (pos_ratio > self.sanity_change_thresh or neg_ratio > self.sanity_change_thresh):
+        # --- DYNAMIC SANITY CHECK (50% Threshold applied ONLY to Submap) ---
+        if is_submap and sanity_ok and (pos_ratio > self.sanity_change_thresh or neg_ratio > self.sanity_change_thresh):
             sanity_ok = False
-            self.get_logger().warn(f"NDT Sanity Failed! Massive map changes detected (Pos: {pos_ratio:.1f}%, Neg: {neg_ratio:.1f}%).")
+            self.get_logger().warn(f"NDT Sanity Failed! Massive SUBMAP changes detected (Pos: {pos_ratio:.1f}%, Neg: {neg_ratio:.1f}%).")
+
+        # --- APPLY FAILURES (Zeroing logic for visualizer) ---
+        if not sanity_ok:
+            aligned_source_points, true_x, true_y, true_yaw = source_points, amcl_x, amcl_y, amcl_yaw
+            dx, dy, dyaw = 0.0, 0.0, 0.0
+            
+            # Reset visual data so it doesn't plot massive garbage
+            unmatched_local_points = np.array([])
+            missing_target_points = np.array([])
+            pos_count, neg_count = 0, 0
+            pos_ratio, neg_ratio = 0.0, 0.0
+            status_msg = 'Rejected (Sanity Failed)'
+        else:
+            status_msg = 'Independent'
 
         return {
             'drift_mat': drift_mat, 
@@ -224,12 +235,12 @@ class NDTAlignerNode(Node):
             'occluded': occluded_target,
             'positive': unmatched_local_points,
             'negative': missing_target_points,
-            'total_scan_freezone': total_scan_data, # Using total scan data here so the visualizer matches
+            'total_scan_freezone': raw_scan_count, 
             'pos_count': pos_count,
             'neg_count': neg_count,
             'pos_ratio': pos_ratio,
             'neg_ratio': neg_ratio,
-            'status': 'Independent'
+            'status': status_msg
         }
 
     def publish_changes(self, g_pos, g_neg, s_pos, s_neg):

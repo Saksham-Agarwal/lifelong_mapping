@@ -25,7 +25,7 @@ class SnapshotPublisher(Node):
         self.sub_local = self.create_subscription(OccupancyGrid, '/robot_local_region', self.local_callback, 10)
         self.sub_submap = self.create_subscription(OccupancyGrid, '/submap_local_region', self.submap_callback, 10)
         self.sub_amcl = self.create_subscription(PoseWithCovarianceStamped, '/amcl_pose', self.amcl_callback, 10)
-        self.sub_scan = self.create_subscription(LaserScan, '/scan_reliable', self.scan_callback, 10)
+        self.sub_scan = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.sub_conf = self.create_subscription(Float32, '/amcl_confidence', self.conf_callback, 10)
         self.snap = self.create_subscription(Bool, '/take_snapshot', self.snap_callback, 10)
         
