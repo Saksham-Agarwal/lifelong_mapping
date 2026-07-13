@@ -67,6 +67,11 @@ class GlobalChangesUpdater(Node):
                 grid_value = 100  # Lethal Obstacle
             elif cluster.change_type == ClusterChange.NEGATIVE_CHANGE:
                 grid_value = -1   # Unknown / Unexplored (Negative Space)
+            
+            elif cluster.change_type == ClusterChange.NEGATIVE_TO_POSITIVE:
+                grid_value = 100  # Lethal Obstacle
+            elif cluster.change_type == ClusterChange.POSITIVE_TO_NEGATIVE:
+                grid_value = -1   # Unknown / Unexplored (Negative Space)   
             else:
                 continue
 
