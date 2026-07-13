@@ -67,7 +67,7 @@ class NDTAlignerNode(Node):
         self.map_bounds = None
         self.sanity_dist_thresh = 0.5  
         self.sanity_yaw_thresh = 0.5  
-        self.sanity_change_thresh - 50.0
+        self.sanity_change_thresh = 50.0
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_snapshot = self.create_subscription(MapSnapshot, '/map_snapshot_data', self.snapshot_callback, 10)
         
