@@ -81,6 +81,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MapBounds.msg"
   "msg/ClusterChange.msg"
   "msg/MapUpdate.msg"
+  "msg/AlignedMapChanges.msg"
   DEPENDENCIES std_msgs geometry_msgs sensor_msgs
 )
 if(BUILD_TESTING)

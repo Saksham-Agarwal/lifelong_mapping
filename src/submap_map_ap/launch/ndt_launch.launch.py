@@ -48,6 +48,21 @@ def generate_launch_description():
         output='screen'
     )
 
+    ndt_visualizer_cmd = Node(
+        package='Scan_matching',
+        executable='ndt_visualiser.py',
+        name='ndt_visualizer_node',
+        output='screen'
+    )
+    cluster_creator_cmd = Node(
+        package='Scan_matching',
+        executable='cluster_creator.py',
+        name='cluster_creator_node',
+        output='screen'
+    )
+
+
+
     global_change_update_cmd = Node(
         package='Scan_matching',
         executable='global_changes_updater.py',
@@ -68,5 +83,7 @@ def generate_launch_description():
     ld.add_action(submap_node_cmd)
     ld.add_action(submap_local_region_cmd)
     ld.add_action(global_change_update_cmd)
+    ld.add_action(ndt_visualizer_cmd)
+    ld.add_action(cluster_creator_cmd)
 
     return ld

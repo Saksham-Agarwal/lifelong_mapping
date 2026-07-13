@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
-
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from geometry_msgs.msg import Point
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 import numpy as np
 import math
-import os
-import time
+import json
 from scipy.spatial import KDTree
 from scipy.ndimage import minimum_filter1d
 
-import matplotlib
-matplotlib.use('Agg') 
-import matplotlib.pyplot as plt
-
-from submap_map_ap.msg import MapSnapshot, MapBounds, MapUpdate, ClusterChange
+# Replace 'submap_map_ap' with your actual package name if different
+from submap_map_ap.msg import MapSnapshot, MapBounds
+from submap_map_ap.msg import AlignedMapChanges 
 
 def skewd(p): return np.array([-p[1], p[0]])
 def expmap(delta):
@@ -42,68 +38,44 @@ def transform_points(trans_mat, points):
 def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_res_deg=1.5, margin=0.2):
     if len(global_points) == 0:
         return global_points, np.array([])
-        
     angular_res = math.radians(angular_res_deg)
-    
     local_shifted = local_points - np.array([rx, ry])
     global_shifted = global_points - np.array([rx, ry])
-    
     local_angles = np.arctan2(local_shifted[:, 1], local_shifted[:, 0])
     local_radii = np.linalg.norm(local_shifted, axis=1)
-    
     global_angles = np.arctan2(global_shifted[:, 1], global_shifted[:, 0])
     global_radii = np.linalg.norm(global_shifted, axis=1)
-    
     rel_global_angles = (global_angles - ryaw + np.pi) % (2 * np.pi) - np.pi
     deadzone_mask = np.abs(rel_global_angles) > math.radians(70)
-    
     local_bins = np.floor((local_angles + np.pi) / angular_res).astype(int)
     global_bins = np.floor((global_angles + np.pi) / angular_res).astype(int)
-    
     num_bins = int(np.ceil(2 * np.pi / angular_res))
     bin_hit_dist = np.full(num_bins, np.inf)
     np.minimum.at(bin_hit_dist, local_bins, local_radii)
-    
     bin_hit_dist = minimum_filter1d(bin_hit_dist, size=3, mode='wrap')
     bin_hit_dist[bin_hit_dist == np.inf] = 3.0
-    
     visible_mask = global_radii <= (bin_hit_dist[global_bins] + margin)
     final_keep_mask = visible_mask & ~deadzone_mask
-    
     visible_global = global_points[final_keep_mask]
     occluded_global = global_points[~final_keep_mask]
-    
     return visible_global, occluded_global
 
-def plot_robot_and_deadspace(ax, x, y, yaw):
-    ax.plot(x, y, 'go', markersize=10, zorder=10)
-    line_length = 0.5 
-    ax.plot([x, x + line_length * math.cos(yaw)], [y, y + line_length * math.sin(yaw)], 'g-', linewidth=2.5, zorder=10)
-    angle_pos = yaw + math.radians(70)
-    angle_neg = yaw - math.radians(70)
-    ax.plot([x, x + line_length * math.cos(angle_pos)], [y, y + line_length * math.sin(angle_pos)], 'k--', linewidth=1.5, zorder=9)
-    ax.plot([x, x + line_length * math.cos(angle_neg)], [y, y + line_length * math.sin(angle_neg)], 'k--', linewidth=1.5, zorder=9)
-
-
-class NDTNode(Node):
+class NDTAlignerNode(Node):
     def __init__(self):
-        super().__init__('ndt_node')
-        self.save_dir = os.path.join(os.getcwd(), 'saves')
-        os.makedirs(self.save_dir, exist_ok=True)
-        
+        super().__init__('ndt_aligner_node')
         latching_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.map_bounds = None
+        self.sanity_dist_thresh = 0.5  
+        self.sanity_yaw_thresh = 0.5  
         
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_snapshot = self.create_subscription(MapSnapshot, '/map_snapshot_data', self.snapshot_callback, 10)
         
-        self.pub_update = self.create_publisher(MapUpdate, '/map_changes', 10)
+        self.pub_changes = self.create_publisher(AlignedMapChanges, '/aligned_map_changes', 10)
         self.pub_sanity = self.create_publisher(Bool, '/sanity_ndt', 10)
+        self.pub_debug = self.create_publisher(String, '/ndt_debug_data', 10)
         
-        self.sanity_dist_thresh = 0.6  
-        self.sanity_yaw_thresh = 0.5   
-        
-        self.get_logger().info('NDT Node running. Waiting for snapshots...')
+        self.get_logger().info('NDT Aligner Node running.')
 
     def bounds_callback(self, msg):
         self.map_bounds = msg
@@ -113,15 +85,11 @@ class NDTNode(Node):
             self.get_logger().warn('No map bounds yet. Ignoring snapshot.')
             return
             
-        self.get_logger().info('Snapshot received! Cropping scan and map data...')
-        
         raw_global_points = np.array([[p.x, p.y] for p in msg.global_points])
         raw_submap_points = np.array([[p.x, p.y] for p in msg.submap_points]) 
         raw_source_points = np.array([[p.x, p.y] for p in msg.local_points])
         
-        if len(raw_global_points) == 0 or len(raw_source_points) == 0: 
-            return
-
+        if len(raw_global_points) == 0 or len(raw_source_points) == 0: return
         amcl_x, amcl_y, amcl_yaw = msg.amcl_x, msg.amcl_y, msg.amcl_yaw
         
         def crop_to_bbox(pts, cx, cy, margin=3.0):
@@ -134,33 +102,24 @@ class NDTNode(Node):
         global_points = crop_to_bbox(raw_global_points, amcl_x, amcl_y)
         submap_points = crop_to_bbox(raw_submap_points, amcl_x, amcl_y)
 
-        if len(source_points) == 0:
-            return
+        if len(source_points) == 0: return
 
-        # Phase 1: Independent NDT alignment
         global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw)
         submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw)
 
-        # Phase 2: Conflict Resolution
         if global_res and submap_res and global_res['sanity_ok'] and submap_res['sanity_ok']:
             dist_diff = math.hypot(submap_res['tx'] - global_res['tx'], submap_res['ty'] - global_res['ty'])
             yaw_diff = abs(math.atan2(math.sin(submap_res['tyaw'] - global_res['tyaw']), math.cos(submap_res['tyaw'] - global_res['tyaw'])))
-            
-            # High Sensitivity Thresholds
-            dist_thresh = 0.005 # meters
-            yaw_thresh_rad = math.radians(0.002) # degrees to rad
+            dist_thresh, yaw_thresh_rad = 0.01, math.radians(0.1)
 
             if dist_diff > dist_thresh or yaw_diff > yaw_thresh_rad:
                 global_err = global_res['pos_ratio'] + global_res['neg_ratio']
                 submap_err = submap_res['pos_ratio'] + submap_res['neg_ratio']
-                
                 if global_err <= submap_err:
-                    self.get_logger().info("Poses diverged. Global map fits better. Forcing Submap to Global pose.")
                     submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=global_res['drift_mat'])
                     global_res['status'] = "Winner (Independent)"
                     submap_res['status'] = "Forced (Aligned to Global)"
                 else:
-                    self.get_logger().info("Poses diverged. Submap fits better. Forcing Global to Submap pose.")
                     global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=submap_res['drift_mat'])
                     submap_res['status'] = "Winner (Independent)"
                     global_res['status'] = "Forced (Aligned to Submap)"
@@ -168,319 +127,154 @@ class NDTNode(Node):
                 global_res['status'] = "Independent (Matched Submap)"
                 submap_res['status'] = "Independent (Matched Global)"
 
-        # Phase 3: Hybrid Publishing
         if submap_res and global_res:
             sanity_msg = Bool()
             if not submap_res['sanity_ok']:
-                self.get_logger().warn(f"SUBMAP NDT drifted too far! (Dist: {submap_res['drift_distance']:.2f}m). /sanity_ndt = False.")
                 sanity_msg.data = False
             else:
-                self.get_logger().info("NDT alignment successful. Publishing Hybrid map updates. /sanity_ndt = True.")
                 sanity_msg.data = True
-                
-                # --- HYBRID MAGIC ---
-                # Positive changes (New Obstacles) come from the Global Map so they don't get chopped up.
-                # Negative changes (Removed Obstacles) come from the Submap so we can clear recent dynamic objects.
-                self.publish_changes(global_res['positive'], submap_res['negative'])
-            
+                self.publish_changes(
+                    global_res['positive'], global_res['negative'], 
+                    submap_res['positive'], submap_res['negative']
+                )
             self.pub_sanity.publish(sanity_msg)
         elif global_res:
-            sanity_msg = Bool()
-            sanity_msg.data = False
+            sanity_msg = Bool(data=False)
             self.pub_sanity.publish(sanity_msg)
 
-        # Phase 4: Visualization
-        self.save_plot(source_points, global_points, submap_points, global_res, submap_res, msg)
+        self.publish_debug_data(msg, source_points, global_points, submap_points, global_res, submap_res)
 
     def process_ndt_pipeline(self, target_points, source_points, amcl_x, amcl_y, amcl_yaw, override_drift_mat=None):
-        if len(target_points) == 0:
-            return None
-            
+        if len(target_points) == 0: return None
         center = np.array([amcl_x, amcl_y])
         centered_target = target_points - center
         centered_source = source_points - center
         
-        # Calculate or Override Matrix
         if override_drift_mat is not None:
             drift_mat = override_drift_mat
         else:
             target_covs = compute_target_covariances(centered_target)
-            initial_trans_mat = np.eye(3)
-            drift_mat = self.ndt_scan_matching(initial_trans_mat, centered_source, centered_target, target_covs)
+            drift_mat = self.ndt_scan_matching(np.eye(3), centered_source, centered_target, target_covs)
         
-        aligned_centered_source = transform_points(drift_mat, centered_source)
-        aligned_source_points = aligned_centered_source + center
-        
-        dx = drift_mat[0, 2]
-        dy = drift_mat[1, 2]
+        aligned_source_points = transform_points(drift_mat, centered_source) + center
+        dx, dy = drift_mat[0, 2], drift_mat[1, 2]
         dyaw = math.atan2(drift_mat[1, 0], drift_mat[0, 0])
-        
-        true_x = amcl_x + dx
-        true_y = amcl_y + dy
-        true_yaw = amcl_yaw + dyaw
+        true_x, true_y, true_yaw = amcl_x + dx, amcl_y + dy, amcl_yaw + dyaw
         drift_distance = math.hypot(dx, dy)
 
         sanity_ok = not (drift_distance > self.sanity_dist_thresh or abs(dyaw) > self.sanity_yaw_thresh)
         if not sanity_ok:
-            aligned_source_points = source_points
-            true_x, true_y, true_yaw = amcl_x, amcl_y, amcl_yaw
+            aligned_source_points, true_x, true_y, true_yaw = source_points, amcl_x, amcl_y, amcl_yaw
             dx, dy, dyaw = 0.0, 0.0, 0.0
 
-        visible_target, occluded_target = filter_occluded_points(
-            target_points, aligned_source_points, true_x, true_y, true_yaw
-        )
+        visible_target, occluded_target = filter_occluded_points(target_points, aligned_source_points, true_x, true_y, true_yaw)
         
         if len(visible_target) > 0:
             target_tree = KDTree(target_points) 
             distances_pos, _ = target_tree.query(aligned_source_points)
             unmatched_local_points = aligned_source_points[distances_pos > 0.2]
-            
             local_tree = KDTree(aligned_source_points)
             distances_neg, _ = local_tree.query(visible_target)
             missing_target_points = visible_target[distances_neg > 0.2]
         else:
-            unmatched_local_points = aligned_source_points
-            missing_target_points = np.array([])
+            unmatched_local_points, missing_target_points = aligned_source_points, np.array([])
 
         def strict_crop(pts):
             if len(pts) == 0: return pts
-            mask = (pts[:, 0] >= true_x - 3.0) & (pts[:, 0] <= true_x + 3.0) & \
-                   (pts[:, 1] >= true_y - 3.0) & (pts[:, 1] <= true_y + 3.0)
+            mask = (pts[:, 0] >= true_x - 3.0) & (pts[:, 0] <= true_x + 3.0) & (pts[:, 1] >= true_y - 3.0) & (pts[:, 1] <= true_y + 3.0)
             return pts[mask]
 
         if sanity_ok:
             unmatched_local_points = strict_crop(unmatched_local_points)
             missing_target_points = strict_crop(missing_target_points)
-            
             if len(unmatched_local_points) > 0:
                 u_shifted = unmatched_local_points - np.array([true_x, true_y])
-                u_angles = np.arctan2(u_shifted[:, 1], u_shifted[:, 0])
-                rel_u_angles = (u_angles - true_yaw + np.pi) % (2 * np.pi) - np.pi
-                u_in_fov = np.abs(rel_u_angles) <= math.radians(70)
+                u_in_fov = np.abs((np.arctan2(u_shifted[:, 1], u_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(70)
                 unmatched_local_points = unmatched_local_points[u_in_fov]
 
         local_shifted = aligned_source_points - np.array([true_x, true_y])
-        local_angles = np.arctan2(local_shifted[:, 1], local_shifted[:, 0])
-        rel_local_angles = (local_angles - true_yaw + np.pi) % (2 * np.pi) - np.pi
-        source_in_fov_mask = np.abs(rel_local_angles) <= math.radians(70)
+        source_in_fov_mask = np.abs((np.arctan2(local_shifted[:, 1], local_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(70)
         freezone_source_points = aligned_source_points[source_in_fov_mask]
         
         total_scan_freezone = len(freezone_source_points)
-        pos_count = len(unmatched_local_points)
-        neg_count = len(missing_target_points)
-        
+        pos_count, neg_count = len(unmatched_local_points), len(missing_target_points)
         pos_ratio = (pos_count / total_scan_freezone * 100) if total_scan_freezone > 0 else 0.0
         neg_ratio = (neg_count / total_scan_freezone * 100) if total_scan_freezone > 0 else 0.0
 
         return {
-            'drift_mat': drift_mat, 
-            'aligned': aligned_source_points,
+            'drift_mat': drift_mat, 'aligned': aligned_source_points,
             'tx': true_x, 'ty': true_y, 'tyaw': true_yaw,
-            'dx': dx, 'dy': dy, 'dyaw': dyaw,
-            'drift_distance': drift_distance,
-            'sanity_ok': sanity_ok,
-            'visible': visible_target,
-            'occluded': occluded_target,
-            'positive': unmatched_local_points,
-            'negative': missing_target_points,
-            'total_scan_freezone': total_scan_freezone,
-            'pos_count': pos_count,
-            'neg_count': neg_count,
-            'pos_ratio': pos_ratio,
-            'neg_ratio': neg_ratio,
-            'status': 'Independent'
+            'dx': dx, 'dy': dy, 'dyaw': dyaw, 'drift_distance': drift_distance,
+            'sanity_ok': sanity_ok, 'visible': visible_target, 'occluded': occluded_target,
+            'positive': unmatched_local_points, 'negative': missing_target_points,
+            'total_scan_freezone': total_scan_freezone, 'pos_count': pos_count, 'neg_count': neg_count,
+            'pos_ratio': pos_ratio, 'neg_ratio': neg_ratio, 'status': 'Independent'
         }
 
-    def publish_changes(self, new_obstacles, removed_obstacles):
-        update_msg = MapUpdate()
-        update_msg.header.stamp = self.get_clock().now().to_msg()
-        update_msg.header.frame_id = 'map'
+    def publish_changes(self, g_pos, g_neg, s_pos, s_neg):
+        msg = AlignedMapChanges()
+        def to_pts(arr): return [Point(x=float(p[0]), y=float(p[1]), z=0.0) for p in arr]
         
-        # --- NEW: Spatial Clustering Logic ---
-        def add_clusters(points, change_type):
-            if len(points) == 0: return
+        msg.global_positive = to_pts(g_pos)
+        msg.global_negative = to_pts(g_neg)
+        msg.submap_positive = to_pts(s_pos)
+        msg.submap_negative = to_pts(s_neg)
+        self.pub_changes.publish(msg)
+
+    def publish_debug_data(self, snap_msg, source, global_tgt, submap_tgt, global_res, submap_res):
+        def serialize_res(r):
+            if not r: return None
+            # Convert NumPy arrays to lists for JSON
+            return {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in r.items()}
             
-            # Find all pairs of points within 0.3 meters (30cm radius)
-            tree = KDTree(points)
-            pairs = tree.query_pairs(r=0.3)
-            
-            # Build an adjacency list for the connected graph of points
-            adj = {i: [] for i in range(len(points))}
-            for i, j in pairs:
-                adj[i].append(j)
-                adj[j].append(i)
-                
-            # Breadth-First Search (BFS) to extract contiguous groups
-            visited = set()
-            for i in range(len(points)):
-                if i not in visited:
-                    cluster_indices = []
-                    q = [i]
-                    visited.add(i)
-                    
-                    while q:
-                        curr = q.pop(0)
-                        cluster_indices.append(curr)
-                        for neighbor in adj[curr]:
-                            if neighbor not in visited:
-                                visited.add(neighbor)
-                                q.append(neighbor)
-                    
-                    # Create a distinct ClusterChange message for this specific spatial block
-                    cc = ClusterChange()
-                    cc.change_type = change_type
-                    for idx in cluster_indices:
-                        pt = points[idx]
-                        cc.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
-                    
-                    update_msg.clusters.append(cc)
-
-        add_clusters(new_obstacles, ClusterChange.POSITIVE_CHANGE)
-        add_clusters(removed_obstacles, ClusterChange.NEGATIVE_CHANGE)
-
-        if len(update_msg.clusters) > 0:
-            self.pub_update.publish(update_msg)
-
-    def save_plot(self, source, global_target, submap_target, global_res, submap_res, msg):
-        fig = plt.figure(figsize=(24, 14)) 
-        
-        plt_min_x, plt_max_x = msg.amcl_x - 3.0, msg.amcl_x + 3.0
-        plt_min_y, plt_max_y = msg.amcl_y - 3.0, msg.amcl_y + 3.0
-
-        def format_ax(ax, title):
-            ax.set_title(title)
-            ax.set_xlim(plt_min_x, plt_max_x)
-            ax.set_ylim(plt_min_y, plt_max_y)
-            ax.set_aspect('equal')
-
-        def plot_row(row_offset, target, res, title_prefix):
-            if not res: return
-
-            ax1 = fig.add_subplot(2, 4, row_offset + 1)
-            format_ax(ax1, f"{title_prefix} - 1. Initial (AMCL)")
-            ax1.scatter(target[:, 0], target[:, 1], c='gray', s=5, alpha=0.5)
-            ax1.scatter(source[:, 0], source[:, 1], c='red', s=5, alpha=0.8)
-            plot_robot_and_deadspace(ax1, msg.amcl_x, msg.amcl_y, msg.amcl_yaw)
-
-            ax2 = fig.add_subplot(2, 4, row_offset + 2)
-            format_ax(ax2, f"{title_prefix} - 2. Corrected (NDT)")
-            ax2.scatter(target[:, 0], target[:, 1], c='gray', s=5, alpha=0.5)
-            ax2.scatter(res['aligned'][:, 0], res['aligned'][:, 1], c='blue', s=5, alpha=0.8)
-            plot_robot_and_deadspace(ax2, res['tx'], res['ty'], res['tyaw'])
-
-            ax3 = fig.add_subplot(2, 4, row_offset + 3)
-            format_ax(ax3, f"{title_prefix} - 3. Freezone Map Changes")
-            if len(res['visible']) > 0:
-                ax3.scatter(res['visible'][:, 0], res['visible'][:, 1], c='gray', s=5, alpha=0.3, label="Visible Base Map")
-            if res['pos_count'] > 0:
-                ax3.scatter(res['positive'][:, 0], res['positive'][:, 1], c='blue', s=15, marker='x', label="New (Pos)")
-            if res['neg_count'] > 0:
-                ax3.scatter(res['negative'][:, 0], res['negative'][:, 1], c='orange', s=15, marker='x', label="Removed (Neg)")
-            plot_robot_and_deadspace(ax3, res['tx'], res['ty'], res['tyaw'])
-            ax3.legend(loc='upper right')
-
-            ax4 = fig.add_subplot(2, 4, row_offset + 4)
-            format_ax(ax4, f"{title_prefix} - 4. Masks")
-            if len(res['occluded']) > 0:
-                ax4.scatter(res['occluded'][:, 0], res['occluded'][:, 1], c='black', s=5, alpha=0.15, label="Discarded")
-            if len(res['visible']) > 0:
-                ax4.scatter(res['visible'][:, 0], res['visible'][:, 1], c='green', s=5, alpha=0.6, label="Kept Freezone")
-            plot_robot_and_deadspace(ax4, res['tx'], res['ty'], res['tyaw'])
-            ax4.legend(loc='upper right')
-
-        plot_row(0, global_target, global_res, "GLOBAL")
-        plot_row(4, submap_target, submap_res, "SUBMAP")
-
-        diag_text = f"AMCL Score: {msg.amcl_confidence:.4f}  |  Initial Pose: X: {msg.amcl_x:.4f}m, Y: {msg.amcl_y:.4f}m, Yaw: {msg.amcl_yaw:.4f}rad\n\n"
-        
-        if global_res:
-            diag_text += (
-                f"[GLOBAL] Alignment Status |  {global_res.get('status', 'N/A')}\n"
-                f"[GLOBAL] Corrected Pose   |  X: {global_res['tx']:.4f}m   |   Y: {global_res['ty']:.4f}m   |   Yaw: {global_res['tyaw']:.4f}rad\n"
-                f"[GLOBAL] Drift            |  ΔX: {global_res['dx']:+.4f}m   |   ΔY: {global_res['dy']:+.4f}m   |   ΔYaw: {global_res['dyaw']:+.4f}rad\n"
-                f"[GLOBAL] Freezone Stats   |  Total Valid Scan Points: {global_res['total_scan_freezone']}   |   Positive Updates: {global_res['pos_count']} ({global_res['pos_ratio']:.1f}%)   |   Negative Updates: {global_res['neg_count']} ({global_res['neg_ratio']:.1f}%)\n\n"
-            )
-        if submap_res:
-            diag_text += (
-                f"[SUBMAP] Alignment Status |  {submap_res.get('status', 'N/A')}\n"
-                f"[SUBMAP] Corrected Pose   |  X: {submap_res['tx']:.4f}m   |   Y: {submap_res['ty']:.4f}m   |   Yaw: {submap_res['tyaw']:.4f}rad\n"
-                f"[SUBMAP] Drift            |  ΔX: {submap_res['dx']:+.4f}m   |   ΔY: {submap_res['dy']:+.4f}m   |   ΔYaw: {submap_res['dyaw']:+.4f}rad\n"
-                f"[SUBMAP] Freezone Stats   |  Total Valid Scan Points: {submap_res['total_scan_freezone']}   |   Positive Updates: {submap_res['pos_count']} ({submap_res['pos_ratio']:.1f}%)   |   Negative Updates: {submap_res['neg_count']} ({submap_res['neg_ratio']:.1f}%)"
-            )
-
-        if global_res and submap_res:
-            diff_x = submap_res['tx'] - global_res['tx']
-            diff_y = submap_res['ty'] - global_res['ty']
-            raw_dyaw = submap_res['tyaw'] - global_res['tyaw']
-            diff_yaw = math.atan2(math.sin(raw_dyaw), math.cos(raw_dyaw)) 
-            diag_text += (
-                f"\n\n[FINAL ALIGNMENT DIFFERENCE] ΔX: {diff_x:+.4f}m   |   ΔY: {diff_y:+.4f}m   |   ΔYaw: {diff_yaw:+.4f}rad"
-            )
-
-        fig.text(0.5, 0.05, diag_text, ha='center', va='bottom', fontsize=12, bbox=dict(facecolor='white', alpha=0.8, edgecolor='black', boxstyle='round,pad=0.5'))
-        plt.subplots_adjust(bottom=0.28) 
-        
-        filename = os.path.join(self.save_dir, f"snapshot_{int(time.time())}.png")
-        plt.savefig(filename)
-        plt.close(fig)
-        self.get_logger().info(f'Diagnostic plot saved to {filename}')
+        data = {
+            'amcl': {'x': snap_msg.amcl_x, 'y': snap_msg.amcl_y, 'yaw': snap_msg.amcl_yaw, 'conf': snap_msg.amcl_confidence},
+            'source': source.tolist() if len(source) else [],
+            'global_target': global_tgt.tolist() if len(global_tgt) else [],
+            'submap_target': submap_tgt.tolist() if len(submap_tgt) else [],
+            'global_res': serialize_res(global_res),
+            'submap_res': serialize_res(submap_res)
+        }
+        self.pub_debug.publish(String(data=json.dumps(data)))
 
     def ndt_scan_matching(self, trans_mat, source_points, target_points, target_covs):
-        max_iter_num = 15
-        damping = 1e-5  
+        max_iter_num, damping = 15, 1e-5  
         kdtree = KDTree(target_points)
-        
         for iter_num in range(max_iter_num):
-            H = np.zeros((3, 3))
-            b = np.zeros(3)
-            R = trans_mat[:2, :2]
-            corresponding_points_num = 0
-            
+            H, b = np.zeros((3, 3)), np.zeros(3)
+            R, corresponding_points_num = trans_mat[:2, :2], 0
             for i in range(len(source_points)):
                 pt = np.array([source_points[i][0], source_points[i][1], 1.0])
                 query = np.dot(trans_mat, pt)[:2]
                 dist, idx = kdtree.query(query)
-                
                 if dist > 0.3: continue
-                
-                tuning_constant = 0.15
-                weight = 1.0 if dist <= tuning_constant else tuning_constant / dist
+                weight = 1.0 if dist <= 0.15 else 0.15 / dist
                 target = target_points[idx]
                 C = np.eye(3)
                 C[0:2, 0:2] = target_covs[idx]
-                
                 try: IM = np.linalg.inv(C)
                 except: continue
-                    
                 error = np.array([target[0] - query[0], target[1] - query[1], 0.0])
                 v = np.dot(R, skewd(source_points[i]))
                 J = np.zeros((3, 3))
                 J[0:2, 0:2] = -R
                 J[0, 2], J[1, 2] = -v[0], -v[1]
-                
                 H += weight * np.dot(J.T, np.dot(IM, J))
                 b += weight * np.dot(J.T, np.dot(IM, error))
                 corresponding_points_num += 1
-
             if corresponding_points_num < 5: break
-            
             H += np.eye(3) * damping
             try: delta = np.linalg.solve(H, -b)
             except: break
-                
             update = np.dot(delta, delta)
             trans_mat = np.dot(trans_mat, expmap(delta))
             if update < 1e-4: break
-            
         return trans_mat
 
 def main(args=None):
     rclpy.init(args=args)
-    node = NDTNode()
-    try: rclpy.spin(node)
+    try: rclpy.spin(NDTAlignerNode())
     except KeyboardInterrupt: pass
-    finally:
-        node.destroy_node()
-        if rclpy.ok(): rclpy.shutdown()
+    finally: rclpy.shutdown()
 
 if __name__ == '__main__': main()

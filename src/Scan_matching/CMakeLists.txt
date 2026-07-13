@@ -16,6 +16,8 @@ install(PROGRAMS
   # src/snapshot_publisher.py
   src/ndt_node.py
   src/global_changes_updater.py
+  src/ndt_visualiser.py
+  src/cluster_creator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
