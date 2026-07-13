@@ -67,7 +67,7 @@ class NDTAlignerNode(Node):
         self.map_bounds = None
         self.sanity_dist_thresh = 0.5  
         self.sanity_yaw_thresh = 0.5  
-        
+        self.sanity_change_thresh - 50.0
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_snapshot = self.create_subscription(MapSnapshot, '/map_snapshot_data', self.snapshot_callback, 10)
         
@@ -196,19 +196,40 @@ class NDTAlignerNode(Node):
         source_in_fov_mask = np.abs((np.arctan2(local_shifted[:, 1], local_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(70)
         freezone_source_points = aligned_source_points[source_in_fov_mask]
         
-        total_scan_freezone = len(freezone_source_points)
-        pos_count, neg_count = len(unmatched_local_points), len(missing_target_points)
-        pos_ratio = (pos_count / total_scan_freezone * 100) if total_scan_freezone > 0 else 0.0
-        neg_ratio = (neg_count / total_scan_freezone * 100) if total_scan_freezone > 0 else 0.0
+        # --- NEW METRICS & SANITY LOGIC ---
+        
+        # Total number of scan data points (used for the real percentage)
+        total_scan_data = len(aligned_source_points) 
+        
+        pos_count = len(unmatched_local_points)
+        neg_count = len(missing_target_points)
+        
+        # Correctly divide by the total scan data
+        pos_ratio = (pos_count / total_scan_data * 100) if total_scan_data > 0 else 0.0
+        neg_ratio = (neg_count / total_scan_data * 100) if total_scan_data > 0 else 0.0
+
+        # Dynamic Sanity Check: If over 50% of the map has changed, the robot is likely lost or in a completely new environment. Fail NDT.
+        if sanity_ok and (pos_ratio > self.sanity_change_thresh or neg_ratio > self.sanity_change_thresh):
+            sanity_ok = False
+            self.get_logger().warn(f"NDT Sanity Failed! Massive map changes detected (Pos: {pos_ratio:.1f}%, Neg: {neg_ratio:.1f}%).")
 
         return {
-            'drift_mat': drift_mat, 'aligned': aligned_source_points,
+            'drift_mat': drift_mat, 
+            'aligned': aligned_source_points,
             'tx': true_x, 'ty': true_y, 'tyaw': true_yaw,
-            'dx': dx, 'dy': dy, 'dyaw': dyaw, 'drift_distance': drift_distance,
-            'sanity_ok': sanity_ok, 'visible': visible_target, 'occluded': occluded_target,
-            'positive': unmatched_local_points, 'negative': missing_target_points,
-            'total_scan_freezone': total_scan_freezone, 'pos_count': pos_count, 'neg_count': neg_count,
-            'pos_ratio': pos_ratio, 'neg_ratio': neg_ratio, 'status': 'Independent'
+            'dx': dx, 'dy': dy, 'dyaw': dyaw,
+            'drift_distance': drift_distance,
+            'sanity_ok': sanity_ok,
+            'visible': visible_target,
+            'occluded': occluded_target,
+            'positive': unmatched_local_points,
+            'negative': missing_target_points,
+            'total_scan_freezone': total_scan_data, # Using total scan data here so the visualizer matches
+            'pos_count': pos_count,
+            'neg_count': neg_count,
+            'pos_ratio': pos_ratio,
+            'neg_ratio': neg_ratio,
+            'status': 'Independent'
         }
 
     def publish_changes(self, g_pos, g_neg, s_pos, s_neg):
