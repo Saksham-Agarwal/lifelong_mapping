@@ -168,16 +168,20 @@ class NDTNode(Node):
                 global_res['status'] = "Independent (Matched Submap)"
                 submap_res['status'] = "Independent (Matched Global)"
 
-        # Phase 3: Publishing
-        if submap_res:
+        # Phase 3: Hybrid Publishing
+        if submap_res and global_res:
             sanity_msg = Bool()
             if not submap_res['sanity_ok']:
                 self.get_logger().warn(f"SUBMAP NDT drifted too far! (Dist: {submap_res['drift_distance']:.2f}m). /sanity_ndt = False.")
                 sanity_msg.data = False
             else:
-                self.get_logger().info("SUBMAP NDT alignment successful. /sanity_ndt = True.")
+                self.get_logger().info("NDT alignment successful. Publishing Hybrid map updates. /sanity_ndt = True.")
                 sanity_msg.data = True
-                self.publish_changes(submap_res['positive'], submap_res['negative'])
+                
+                # --- HYBRID MAGIC ---
+                # Positive changes (New Obstacles) come from the Global Map so they don't get chopped up.
+                # Negative changes (Removed Obstacles) come from the Submap so we can clear recent dynamic objects.
+                self.publish_changes(global_res['positive'], submap_res['negative'])
             
             self.pub_sanity.publish(sanity_msg)
         elif global_res:
@@ -269,7 +273,7 @@ class NDTNode(Node):
         neg_ratio = (neg_count / total_scan_freezone * 100) if total_scan_freezone > 0 else 0.0
 
         return {
-            'drift_mat': drift_mat,  # Passed out so it can be forced onto the other map
+            'drift_mat': drift_mat, 
             'aligned': aligned_source_points,
             'tx': true_x, 'ty': true_y, 'tyaw': true_yaw,
             'dx': dx, 'dy': dy, 'dyaw': dyaw,
@@ -292,19 +296,47 @@ class NDTNode(Node):
         update_msg.header.stamp = self.get_clock().now().to_msg()
         update_msg.header.frame_id = 'map'
         
-        if len(new_obstacles) > 0:
-            cluster_pos = ClusterChange()
-            cluster_pos.change_type = ClusterChange.POSITIVE_CHANGE
-            for pt in new_obstacles:
-                cluster_pos.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
-            update_msg.clusters.append(cluster_pos)
+        # --- NEW: Spatial Clustering Logic ---
+        def add_clusters(points, change_type):
+            if len(points) == 0: return
             
-        if len(removed_obstacles) > 0:
-            cluster_neg = ClusterChange()
-            cluster_neg.change_type = ClusterChange.NEGATIVE_CHANGE
-            for pt in removed_obstacles:
-                cluster_neg.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
-            update_msg.clusters.append(cluster_neg)
+            # Find all pairs of points within 0.3 meters (30cm radius)
+            tree = KDTree(points)
+            pairs = tree.query_pairs(r=0.3)
+            
+            # Build an adjacency list for the connected graph of points
+            adj = {i: [] for i in range(len(points))}
+            for i, j in pairs:
+                adj[i].append(j)
+                adj[j].append(i)
+                
+            # Breadth-First Search (BFS) to extract contiguous groups
+            visited = set()
+            for i in range(len(points)):
+                if i not in visited:
+                    cluster_indices = []
+                    q = [i]
+                    visited.add(i)
+                    
+                    while q:
+                        curr = q.pop(0)
+                        cluster_indices.append(curr)
+                        for neighbor in adj[curr]:
+                            if neighbor not in visited:
+                                visited.add(neighbor)
+                                q.append(neighbor)
+                    
+                    # Create a distinct ClusterChange message for this specific spatial block
+                    cc = ClusterChange()
+                    cc.change_type = change_type
+                    for idx in cluster_indices:
+                        pt = points[idx]
+                        cc.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
+                    
+                    update_msg.clusters.append(cc)
+
+        add_clusters(new_obstacles, ClusterChange.POSITIVE_CHANGE)
+        add_clusters(removed_obstacles, ClusterChange.NEGATIVE_CHANGE)
 
         if len(update_msg.clusters) > 0:
             self.pub_update.publish(update_msg)

@@ -14,7 +14,7 @@ def generate_launch_description():
     
     # Resolving your specific relative workspace paths to absolute paths
     home_dir = os.path.expanduser('~')
-    map_path = os.path.join(home_dir, 'lifelong_mapping/src/submap_map_ap/map/Training/map_2.yaml')
+    map_path = os.path.join(home_dir, 'lifelong_mapping/src/submap_map_ap/map/Training/map_3.yaml')
     laser_filter_config = os.path.join(home_dir, 'lifelong_mapping/src/submap_map_ap/config/laser_filter_config.yaml')
     # nav2_bringup_dir is already defined at the top of your script!
     rviz_config_path = os.path.join(nav2_bringup_dir, 'rviz', 'nav2_default_view.rviz')

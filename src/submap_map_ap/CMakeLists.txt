@@ -71,12 +71,12 @@ find_package(tf2_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/GridObjectList.msg"
-  "msg/MapGridSummary.msg"
-  "msg/GridBounds.msg"           
-  "msg/MapGridDefinition.msg"  
-  "msg/ChangeObject.msg"
-  "msg/ChangeList.msg"
+  # "msg/GridObjectList.msg"
+  # "msg/MapGridSummary.msg"
+  # "msg/GridBounds.msg"           
+  # "msg/MapGridDefinition.msg"  
+  # "msg/ChangeObject.msg"
+  # "msg/ChangeList.msg"
   "msg/MapSnapshot.msg"
   "msg/MapBounds.msg"
   "msg/ClusterChange.msg"

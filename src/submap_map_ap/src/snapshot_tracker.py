@@ -50,8 +50,8 @@ class SnapshotTriggerNode(Node):
         self.last_recorded_pose = None
         
         # Thresholds
-        self.distance_threshold = 1.0 # meters
-        self.angle_threshold = math.radians(120.0) # Convert 120 degrees to radians
+        self.distance_threshold = 0.75 # meters
+        self.angle_threshold = math.radians(90.0) # Convert 90 degrees to radians
         
         self.get_logger().info('AMCL Distance & Angle Snapshot trigger node started.')
 
