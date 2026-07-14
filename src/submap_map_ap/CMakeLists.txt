@@ -22,7 +22,7 @@ install(PROGRAMS
   # src/robot_grid_tracker.py
   # src/tracked_map_changes.py
   # src/global_memory_visualiser.py
-  src/map_bounds.py
+  # src/map_bounds.py
   src/snapshot_publisher.py
   src/snapshot_tracker.py
   src/map_bounds_publisher.py 

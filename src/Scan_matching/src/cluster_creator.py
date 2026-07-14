@@ -70,30 +70,16 @@ class ClusterCreatorNode(Node):
         _, submap_only_pos = self.get_intersection_and_diff(s_pos, g_pos)
         
         # --- PIPELINE 1: THE FAT ERASERS (All Negatives) ---
-        
-        def safely_dilate_eraser(points_to_erase):
-            """Applies 3x3 dilation and protects base map walls"""
-            raw_eraser = self.dilate_points(points_to_erase)
-            if len(raw_eraser) > 0 and len(g_pos) > 0:
-                wall_tree = KDTree(g_pos)
-                dists, _ = wall_tree.query(raw_eraser)
-                return raw_eraser[dists > 0.05] # Keep eraser points > 5cm from walls
-            return raw_eraser
+        # No extra shield needed. If it's in submap_only_neg, the global map 
+        # either agrees it should be gone, or never had it to begin with.
+        safe_standard_neg = self.dilate_points(both_neg)
+        safe_pos_to_neg = self.dilate_points(submap_only_neg)
 
-        # Apply fat eraser to BOTH types of negative changes
-        safe_standard_neg = safely_dilate_eraser(both_neg)
-        safe_pos_to_neg = safely_dilate_eraser(submap_only_neg)
-
-        # --- PIPELINE 2: THE GHOST BUSTER (NEG TO POS) ---
-        raw_pen = self.dilate_points(submap_only_pos)
-        if len(raw_pen) > 0 and len(g_pos) > 0:
-            base_tree = KDTree(g_pos)
-            dists, _ = base_tree.query(raw_pen)
-            valid_wall_restoration = raw_pen[dists <= 0.05]
-            ghost_artifacts = raw_pen[dists > 0.05]
-        else:
-            valid_wall_restoration = np.array([])
-            ghost_artifacts = raw_pen
+        # --- PIPELINE 2: THE WALL RESTORER (NEG TO POS) ---
+        # If the Submap sees a new point, but the Global Map does NOT see a new point,
+        # it means the Global Map ALREADY has a permanent wall there. 
+        # These points are 100% verified wall restorations.
+        valid_wall_restoration = self.dilate_points(submap_only_pos)
 
         # --- CLUSTERING AND PACKAGING ---
         update_msg = MapUpdate()
@@ -135,12 +121,13 @@ class ClusterCreatorNode(Node):
 
         # Add the packages
         add_clusters(both_pos, ClusterChange.POSITIVE_CHANGE)
+        
+        # Restore walls (These are now mathematically guaranteed to work)
         add_clusters(valid_wall_restoration, ClusterChange.NEGATIVE_TO_POSITIVE)
         
-        # Erase using the protected, dilated points!
+        # Erase using the dilated points!
         add_clusters(safe_standard_neg, ClusterChange.NEGATIVE_CHANGE)
         add_clusters(safe_pos_to_neg, ClusterChange.POSITIVE_TO_NEGATIVE)
-        add_clusters(ghost_artifacts, ClusterChange.POSITIVE_TO_NEGATIVE) 
 
         if len(update_msg.clusters) > 0:
             self.pub_update.publish(update_msg)

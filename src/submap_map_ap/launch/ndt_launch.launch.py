@@ -13,6 +13,13 @@ def generate_launch_description():
         output='screen'
     )
 
+    perimeter_publisher_cmd = Node(
+        package='submap_map_ap',
+        executable='perimeter_publisher.py',
+        name='wall_perimeter_publisher',
+        output='screen'
+    )   
+
     snapshot_tracker_cmd = Node(
         package='submap_map_ap',
         executable='snapshot_tracker.py',
@@ -77,6 +84,7 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     ld.add_action(map_bounds_cmd)
+    ld.add_action(perimeter_publisher_cmd)
     ld.add_action(snapshot_tracker_cmd)
     ld.add_action(snapshot_publisher_cmd)
     ld.add_action(ndt_node_cmd)
