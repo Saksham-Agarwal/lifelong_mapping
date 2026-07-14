@@ -4,13 +4,13 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
-from std_msgs.msg import Float32
+from std_msgs.msg import Int32
 import numpy as np
 import cv2
 
-class WallPerimeterLengthPublisher(Node):
+class MapAnalyticsPublisher(Node):
     def __init__(self):
-        super().__init__('wall_perimeter_publisher')
+        super().__init__('map_analytics_publisher')
         
         # QoS Profile: Reliable and Transient Local (Latching)
         latching_qos = QoSProfile(
@@ -27,18 +27,17 @@ class WallPerimeterLengthPublisher(Node):
             latching_qos
         )
         
-        # Publisher for the perimeter length (in meters)
-        self.pub_perimeter_length = self.create_publisher(Float32, '/wall_perimeter_length', latching_qos)
+        # Publisher ONLY for the internal occupied points
+        self.pub_internal_occupied = self.create_publisher(Int32, '/internal_occupied_count', latching_qos)
         
         self.published = False
-        self.get_logger().info('Waiting for /map to calculate wall perimeter length...')
+        self.get_logger().info('Waiting for /map to calculate internal occupied points...')
 
     def map_callback(self, msg):
-        # We only need to process and publish this once
+        # Process and publish this once
         if not self.published:
             width = msg.info.width
             height = msg.info.height
-            resolution = msg.info.resolution
             
             # 1. Reshape the 1D flat array into a 2D grid
             grid_2d = np.array(msg.data, dtype=np.int8).reshape((height, width))
@@ -50,7 +49,7 @@ class WallPerimeterLengthPublisher(Node):
             kernel = np.ones((3, 3), np.uint8)
             free_space = cv2.morphologyEx(free_space, cv2.MORPH_OPEN, kernel)
             
-            # 4. Find the outermost contour
+            # 4. Find the outermost contour to define the room bounds
             contours, _ = cv2.findContours(free_space, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             
             if not contours:
@@ -60,26 +59,31 @@ class WallPerimeterLengthPublisher(Node):
             # 5. Isolate the main room (largest contour area)
             main_room_contour = max(contours, key=cv2.contourArea)
             
-            # 6. Calculate the perimeter length in pixels
-            # The 'True' flag specifies that the contour is a closed loop
-            perimeter_pixels = cv2.arcLength(main_room_contour, True)
+            # 6. Create a solid mask of the entire room interior
+            room_interior_mask = np.zeros_like(free_space)
+            cv2.drawContours(room_interior_mask, [main_room_contour], -1, 255, thickness=-1)
             
-            # 7. Convert pixel length to real-world meters
-            perimeter_meters = perimeter_pixels * resolution
+            # 7. Create a mask of ALL occupied cells in the map (> 50 probability)
+            occupied_cells = np.where(grid_2d > 50, 255, 0).astype(np.uint8)
             
-            # 8. Create the Float32 message and publish
-            length_msg = Float32()
-            length_msg.data = float(perimeter_meters)
+            # 8. Find the intersection: Occupied cells strictly INSIDE the room
+            internal_objects_mask = cv2.bitwise_and(occupied_cells, room_interior_mask)
             
-            self.pub_perimeter_length.publish(length_msg)
+            # 9. Count the points and explicitly cast to Python int for the ROS message
+            internal_occupied_count = int(np.count_nonzero(internal_objects_mask))
+            
+            # Publish the count
+            count_msg = Int32()
+            count_msg.data = internal_occupied_count
+            self.pub_internal_occupied.publish(count_msg)
+            
             self.published = True
-            
-            self.get_logger().info(f'Success! Room perimeter length published to /wall_perimeter_length.')
-            self.get_logger().info(f'Length: {perimeter_meters:.3f} meters')
+            self.get_logger().info('Success! Internal occupied points published.')
+            self.get_logger().info(f' - Internal occupied points: {internal_occupied_count}')
 
 def main(args=None):
     rclpy.init(args=args)
-    node = WallPerimeterLengthPublisher()
+    node = MapAnalyticsPublisher()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

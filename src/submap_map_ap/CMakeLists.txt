@@ -28,6 +28,9 @@ install(PROGRAMS
   src/map_bounds_publisher.py 
   src/submap.py
   src/submap_local_region.py
+  src/occupied_cell_publisher.py
+  src/bot_pos_stat_tracker.py
+  src/bot_stat_verifier.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
