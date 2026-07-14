@@ -39,7 +39,7 @@ class BotPositionTracker(Node):
         confidence = msg.data
         
         # Evaluate if confidence is below threshold
-        is_lost = confidence < 0.4
+        is_lost = confidence < 0.25
         
         # Only trigger publish if the state has actually changed (or on first run)
         if self.current_state != is_lost:

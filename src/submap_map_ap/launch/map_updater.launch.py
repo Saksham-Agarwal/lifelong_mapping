@@ -22,8 +22,8 @@ def generate_launch_description():
         # 3. State Verifier Node
         Node(
             package='submap_map_ap',
-            executable='bot_stat_verifier.py', # Must match the exact filename in scripts/
-            name='bot_state_verifier',
+            executable='bot_report_generator.py', # Must match the exact filename in scripts/
+            name='bot_report_generator',
             output='screen',
             parameters=[
                 {'ratio_threshold': 0.45}

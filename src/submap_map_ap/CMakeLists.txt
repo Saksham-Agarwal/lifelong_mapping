@@ -30,7 +30,7 @@ install(PROGRAMS
   src/submap_local_region.py
   src/occupied_cell_publisher.py
   src/bot_pos_stat_tracker.py
-  src/bot_stat_verifier.py
+  src/bot_report_generator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
