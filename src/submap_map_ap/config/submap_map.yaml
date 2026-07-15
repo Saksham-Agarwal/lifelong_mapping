@@ -1,0 +1,48 @@
+global_change_updater:
+  min_cluster_size: 10
+
+ndt_node:
+  sanity_dist_threshold: 0.0       # TODO: Set value
+  sanity_yaw_threshold: 0.0        # TODO: Set value
+  sanity_change_threshold: 0.0     # TODO: Set value
+  deadzone_of_bot: 0.0             # TODO: Set value
+  grid_comparison_size: 0          # TODO: Set value
+
+  ndt_aligner:
+    covariance:
+      k_neighbors: 5
+      regularization: 1e-5
+      fallback_scale: 1e-3
+    optimization:
+      max_iterations: 15
+      damping_factor: 1e-5
+      convergence_threshold: 1e-4
+      min_corresponding_points: 5
+    association:
+      max_correspondence_distance: 0.3
+      weight_distance_threshold: 0.15
+
+ndt_visualise: true
+
+AMCL_confidence:
+  k: 0.5
+
+bot_stat_pos_tracker:
+  confidence_threshold_lost: 0.0   # TODO: Set value
+
+local_cost_generator:
+  grid_size: 0                     # TODO: Set value
+
+occupied_cell_publisher:
+  wall_inclusion: false
+
+snapshot_publisher:
+  cooldown_seconds: 5
+
+snapshot_tracker:
+  distance_threshold: 0.0          # TODO: Set value
+  angle_threshold: 0.0             # TODO: Set value
+  confidence_threshold: 0.0        # TODO: Set value
+
+submal_local_Region:
+  grid_size: 0                     # TODO: Set value
