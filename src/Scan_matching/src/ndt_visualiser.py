@@ -24,24 +24,27 @@ def plot_robot_and_deadspace(ax, x, y, yaw, deadzone):
 class NDTVisualizerNode(Node):
     def __init__(self):
         super().__init__('ndt_visualizer_node')
-        self.save_dir = os.path.join(os.getcwd(), 'saves')
-        os.makedirs(self.save_dir, exist_ok=True)
         
-        # 1. Declare parameters
+        # 1. Declare parameters (with save_dir_path parameter added)
         self.declare_parameter('deadzone_of_bot', 70.0)
         self.declare_parameter('ndt_visualise', True)
+        self.declare_parameter('save_dir_path', os.path.join(os.getcwd(), 'saves'))
 
         # 2. Retrieve parameters
         self.deadzone_of_bot = self.get_parameter('deadzone_of_bot').value
         self.ndt_visualise = self.get_parameter('ndt_visualise').value
+        self.save_dir = self.get_parameter('save_dir_path').value
+        
+        # 3. Create the directory safely from the retrieved parameter
+        os.makedirs(self.save_dir, exist_ok=True)
 
-        # 3. Toggle logic: Only run if ndt_visualise is True
+        # 4. Toggle logic: Only run if ndt_visualise is True
         if not self.ndt_visualise:
             self.get_logger().info('NDT Visualizer is DISABLED via config. Node will sit idle.')
             return
 
         self.sub_debug = self.create_subscription(String, '/ndt_debug_data', self.debug_callback, 10)
-        self.get_logger().info('NDT Visualizer Node running. Awaiting debug payloads...')
+        self.get_logger().info(f'NDT Visualizer Node running. Storing snapshots to: {self.save_dir}')
 
     def debug_callback(self, msg):
         try:
@@ -93,7 +96,6 @@ class NDTVisualizerNode(Node):
             format_ax(ax2, f"{title_prefix} - 2. Corrected (NDT)")
             ax2.scatter(target[:, 0], target[:, 1], c='gray', s=5, alpha=0.5)
             ax2.scatter(res['aligned'][:, 0], res['aligned'][:, 1], c='blue', s=5, alpha=0.8)
-            # FIXED: Added self.deadzone_of_bot here
             plot_robot_and_deadspace(ax2, res['tx'], res['ty'], res['tyaw'], self.deadzone_of_bot)
 
             ax3 = fig.add_subplot(2, 4, row_offset + 3)
@@ -104,7 +106,6 @@ class NDTVisualizerNode(Node):
                 ax3.scatter(res['positive'][:, 0], res['positive'][:, 1], c='blue', s=15, marker='x', label="New (Pos)")
             if res['neg_count'] > 0:
                 ax3.scatter(res['negative'][:, 0], res['negative'][:, 1], c='orange', s=15, marker='x', label="Removed (Neg)")
-            # FIXED: Added self.deadzone_of_bot here
             plot_robot_and_deadspace(ax3, res['tx'], res['ty'], res['tyaw'], self.deadzone_of_bot)
             ax3.legend(loc='upper right')
 
@@ -114,7 +115,6 @@ class NDTVisualizerNode(Node):
                 ax4.scatter(res['occluded'][:, 0], res['occluded'][:, 1], c='black', s=5, alpha=0.15, label="Discarded")
             if len(res['visible']) > 0:
                 ax4.scatter(res['visible'][:, 0], res['visible'][:, 1], c='green', s=5, alpha=0.6, label="Kept Freezone")
-            # FIXED: Added self.deadzone_of_bot here
             plot_robot_and_deadspace(ax4, res['tx'], res['ty'], res['tyaw'], self.deadzone_of_bot)
             ax4.legend(loc='upper right')
 

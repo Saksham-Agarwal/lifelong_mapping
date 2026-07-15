@@ -19,7 +19,7 @@ class BotReportGenerator(Node):
         # 1. Parameter for the save directory 
         # (Default assumes you are running from a standard ROS2 workspace)
         default_dir = '~/lifelong_mapping/src/submap_map_ap/map/Training'
-        self.declare_parameter('training_dir', default_dir)
+        self.declare_parameter('Report_Save_Location', default_dir)
         
         # 2. Caches for the data
         self.latest_occupied_count = None
@@ -94,7 +94,7 @@ class BotReportGenerator(Node):
             return
 
         # 1. Setup Directory
-        raw_dir = self.get_parameter('training_dir').get_parameter_value().string_value
+        raw_dir = self.get_parameter('Report_Save_Location').get_parameter_value().string_value
         save_dir = os.path.expanduser(raw_dir) # Expands '~' to /home/username
         os.makedirs(save_dir, exist_ok=True)
         

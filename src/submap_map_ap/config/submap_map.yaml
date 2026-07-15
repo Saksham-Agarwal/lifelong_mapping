@@ -1,6 +1,8 @@
 /**:
   ros__parameters:
     deadzone_of_bot: 70.0
+    use_sim_time: true
+    map_path: "/home/saksham-22/lifelong_mapping/src/submap_map_ap/map/bookstore/map.yaml"
 
 global_change_updater:
   ros__parameters:
@@ -30,7 +32,7 @@ ndt_node:
 ndt_visualizer_node:
   ros__parameters:
     ndt_visualise: true
-
+    save_dir_path: "~/snapshots"  
 AMCL_Confidence:
   ros__parameters:
     k: 0.5
@@ -57,6 +59,10 @@ snapshot_trigger_node:
     angle_threshold: 90
     confidence_threshold: 0.65
 
+bot_report_generator: 
+  ros__parameters:
+    Report_Save_Location: '~/map/Training'
+
 submap_local_region:
   ros__parameters:
-    grid_size: 8                     # Adjusted typo/case to match your node launch name
+    grid_size: 8

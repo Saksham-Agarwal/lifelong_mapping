@@ -1,4 +1,5 @@
 import os
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
@@ -7,63 +8,77 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # ---------------------------------------------------------
-    # 1. Path Resolutions
+    # 1. Path Resolutions & Configurations
     # ---------------------------------------------------------
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     submap_map_ap_dir = get_package_share_directory('submap_map_ap')
     
-    # Resolving your specific relative workspace paths to absolute paths
-    home_dir = os.path.expanduser('~')
-    map_path = os.path.join(home_dir, 'lifelong_mapping/src/submap_map_ap/map/Training/map_4.yaml')
-    laser_filter_config = os.path.join(home_dir, 'lifelong_mapping/src/submap_map_ap/config/laser_filter_config.yaml')
-    # nav2_bringup_dir is already defined at the top of your script!
+    config_file_path = os.path.join(submap_map_ap_dir, 'config', 'submap_map.yaml')
     rviz_config_path = os.path.join(nav2_bringup_dir, 'rviz', 'nav2_default_view.rviz')
+    
     # ---------------------------------------------------------
-    # 2. Define Launch Actions & Nodes
+    # 2. Parse Parameters Natively From YAML File
+    # ---------------------------------------------------------
+    try:
+        with open(config_file_path, 'r') as f:
+            yaml_data = yaml.safe_load(f)
+        
+        # Isolate global parameters from the '/**' wildcard block
+        global_params = yaml_data.get('/**', {}).get('ros__parameters', {})
+        
+        # Extract values with safe defaults if keys are missing
+        map_path_val = global_params.get('map_path', os.path.join(submap_map_ap_dir, 'map', 'Training', 'map_4.yaml'))
+        use_sim_time_val = str(global_params.get('use_sim_time', True)).lower() # Nav2 arguments expect 'true'/'false' strings
+    except Exception as e:
+        # Print the error so it doesn't fail silently!
+        print(f"\n[WARNING] Failed to load YAML config: {e}")
+        print("[WARNING] Falling back to default map_4.yaml!\n")
+        
+        map_path_val = os.path.join(submap_map_ap_dir, 'map', 'Training', 'map_4.yaml')
+        use_sim_time_val = 'true'
+
+    # ---------------------------------------------------------
+    # 3. Define Launch Actions & Nodes
     # ---------------------------------------------------------
 
-    # Localization
+    # Localization Stack
     localization_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(nav2_bringup_dir, 'launch', 'localization_launch.py')
         ),
-        launch_arguments={'map': map_path}.items()
+        launch_arguments={
+            'map': map_path_val, 
+            'use_sim_time': use_sim_time_val
+        }.items()
     )
 
-    # Navigation
+    # Navigation Stack
     navigation_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(nav2_bringup_dir, 'launch', 'navigation_launch.py')
         ),
-        launch_arguments={'map': map_path}.items()
+        launch_arguments={
+            'map': map_path_val, 
+            'use_sim_time': use_sim_time_val
+        }.items()
     )
 
-    # RViz2
+    # RViz2 Visualization
     rviz2_cmd = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
         arguments=['-d', rviz_config_path],
+        parameters=[{'use_sim_time': use_sim_time_val == 'true'}],
         output='screen'
     )
 
-    # Change Detector Launch
-    change_detector_cmd = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(submap_map_ap_dir, 'launch', 'change_detector.launch.py')
-        )
-    )
-
-    # Laser Filters Node
-    laser_filter_cmd = Node(
-        package='laser_filters',
-        executable='scan_to_scan_filter_chain',
-        name='laser_filter',
-        parameters=[laser_filter_config],
-        remappings=[
-            ('/scan', '/scan_raw'),
-            ('/scan_filtered', '/scan_reliable')
-        ],
+    # Costmap Generator Node
+    costmap_generator_cmd = Node(
+        package='submap_map_ap',
+        executable='costmap_generator.py',
+        name='costmap_generator',
+        parameters=[config_file_path],
         output='screen'
     )
 
@@ -72,19 +87,19 @@ def generate_launch_description():
         package='submap_map_ap',
         executable='amcl_confidence.py', 
         name='AMCL_Confidence',
+        parameters=[config_file_path],
         output='screen'
     )
 
     # ---------------------------------------------------------
-    # 3. Create and Populate Launch Description
+    # 4. Create and Populate Launch Description
     # ---------------------------------------------------------
     ld = LaunchDescription()
 
     ld.add_action(localization_cmd)
     ld.add_action(navigation_cmd)
     ld.add_action(rviz2_cmd)
-    ld.add_action(change_detector_cmd)
-    ld.add_action(laser_filter_cmd)
+    ld.add_action(costmap_generator_cmd)
     ld.add_action(amcl_confidence_cmd)
 
-    return ld 
+    return ld
