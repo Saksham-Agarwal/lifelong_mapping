@@ -31,8 +31,8 @@ ndt_node:
 
 ndt_visualizer_node:
   ros__parameters:
-    ndt_visualise: true
-    save_dir_path: "~/snapshots"  
+    ndt_visualise: False
+    save_dir_path: "/home/saksham-22/snapshots"  
 AMCL_Confidence:
   ros__parameters:
     k: 0.5
@@ -55,13 +55,14 @@ snapshot_publisher:
 
 snapshot_trigger_node:
   ros__parameters:
-    distance_threshold: 0.75
-    angle_threshold: 90
-    confidence_threshold: 0.65
+    distance_threshold: 0.5
+    angle_threshold: 45
+    confidence_threshold: 0.55
 
 bot_report_generator: 
   ros__parameters:
-    Report_Save_Location: '~/map/Training'
+    Report_Save_Location: '/home/saksham-22/map/Training'
+    occupied_cells_diluter: 2.5
 
 submap_local_region:
   ros__parameters:

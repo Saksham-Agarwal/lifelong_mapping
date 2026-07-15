@@ -20,7 +20,9 @@ class BotReportGenerator(Node):
         # (Default assumes you are running from a standard ROS2 workspace)
         default_dir = '~/lifelong_mapping/src/submap_map_ap/map/Training'
         self.declare_parameter('Report_Save_Location', default_dir)
-        
+        self.declare_parameter('occupied_cells_diluter', 2.5)
+        self.diluter = self.get_parameter('occupied_cells_diluter').value
+
         # 2. Caches for the data
         self.latest_occupied_count = None
         self.latest_changes_map = None
@@ -111,9 +113,10 @@ class BotReportGenerator(Node):
         deflation_factor = 6.0
         est_pos_cells = raw_pos_cells
         est_neg_cells = raw_neg_cells / deflation_factor
+        occupied_cells = self.latest_occupied_count/ self.diluter
         
-        pos_pct = (est_pos_cells / self.latest_occupied_count) * 100
-        neg_pct = (est_neg_cells / self.latest_occupied_count) * 100
+        pos_pct = (est_pos_cells / occupied_cells) * 100
+        neg_pct = (est_neg_cells / occupied_cells) * 100
         tot_pct = pos_pct + neg_pct
         
         # 3. Save Submap (PGM + YAML)
@@ -163,12 +166,13 @@ free_thresh: 0.196
 
 
     def generate_visual_report(self, save_dir, map_id, pos_cells, neg_cells, pos_pct, neg_pct, tot_pct):
-        changes_2d = np.rot90(changes_2d)
         """Creates the Matplotlib diagnostic plot and saves it."""
         width = self.latest_changes_map.info.width
         height = self.latest_changes_map.info.height
-        changes_2d = np.array(self.latest_changes_map.data, dtype=np.int8).reshape((height, width))
         
+        changes_2d = np.array(self.latest_changes_map.data, dtype=np.int8).reshape((height, width))
+        changes_2d = np.rot90(changes_2d)
+
         # --- FIX: Create an RGB image so the map is actually readable ---
         # Unknown (-1) -> Red (Negative Change)
         # Free (0) -> White
