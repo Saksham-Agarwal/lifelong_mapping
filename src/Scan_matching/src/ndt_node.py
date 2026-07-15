@@ -202,8 +202,11 @@ class NDTAlignerNode(Node):
         
         pos_ratio = (pos_count / raw_scan_count * 100) if raw_scan_count > 0 else 0.0
         
-        total_map_points_in_box = len(target_points)
-        neg_ratio = (neg_count / total_map_points_in_box * 100) if total_map_points_in_box > 0 else 0.0
+        # --- THE FIX: Denominator is now strictly the EXPECTED VISIBLE points ---
+        expected_visible_cropped = strict_crop(visible_target)
+        total_visible_map_points = len(expected_visible_cropped)
+        
+        neg_ratio = (neg_count / total_visible_map_points * 100) if total_visible_map_points > 0 else 0.0
 
         # --- DYNAMIC SANITY CHECK (50% Threshold applied ONLY to Submap) ---
         if is_submap and sanity_ok and (pos_ratio > self.sanity_change_thresh or neg_ratio > self.sanity_change_thresh):

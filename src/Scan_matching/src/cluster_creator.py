@@ -20,10 +20,7 @@ class ClusterCreatorNode(Node):
         )
         self.pub_update = self.create_publisher(MapUpdate, '/map_changes', 10)
         
-        # Grid resolution for dilation (assume 5cm occupancy grid)
-        self.grid_res = 0.05 
-        
-        self.get_logger().info('Cluster Creator Node running with Dual-Shield Logic.')
+        self.get_logger().info('Cluster Creator Node running (Direct Mapping for state transitions).')
 
     def extract_pts(self, point_array):
         if not point_array: return np.array([])
@@ -40,21 +37,6 @@ class ClusterCreatorNode(Node):
         intersect_mask = dists <= threshold
         return pts_A[intersect_mask], pts_A[~intersect_mask]
 
-    def dilate_points(self, points):
-        """Creates a 3x3 square around each point"""
-        if len(points) == 0: return points
-        
-        dilated = []
-        offsets = [-self.grid_res, 0, self.grid_res]
-        
-        for p in points:
-            for dx in offsets:
-                for dy in offsets:
-                    dilated.append([p[0] + dx, p[1] + dy])
-                    
-        dilated_arr = np.round(np.array(dilated), decimals=3)
-        return np.unique(dilated_arr, axis=0)
-
     def changes_callback(self, msg):
         g_pos = self.extract_pts(msg.global_positive)
         g_neg = self.extract_pts(msg.global_negative)
@@ -65,29 +47,28 @@ class ClusterCreatorNode(Node):
         both_pos, _ = self.get_intersection_and_diff(g_pos, s_pos)
         both_neg, _ = self.get_intersection_and_diff(g_neg, s_neg)
         
-        # 2. Submap Unique Differences
+        # 2. Submap Unique Differences (State Transitions)
         _, submap_only_neg = self.get_intersection_and_diff(s_neg, g_neg)
         _, submap_only_pos = self.get_intersection_and_diff(s_pos, g_pos)
-        
-        # --- PIPELINE 1: THE FAT ERASERS (All Negatives) ---
-        # No extra shield needed. If it's in submap_only_neg, the global map 
-        # either agrees it should be gone, or never had it to begin with.
-        safe_standard_neg = self.dilate_points(both_neg)
-        safe_pos_to_neg = self.dilate_points(submap_only_neg)
 
-        # --- PIPELINE 2: THE WALL RESTORER (NEG TO POS) ---
-        # If the Submap sees a new point, but the Global Map does NOT see a new point,
-        # it means the Global Map ALREADY has a permanent wall there. 
-        # These points are 100% verified wall restorations.
-        valid_wall_restoration = self.dilate_points(submap_only_pos)
-
-        # --- CLUSTERING AND PACKAGING ---
         update_msg = MapUpdate()
         update_msg.header.stamp = self.get_clock().now().to_msg()
         update_msg.header.frame_id = 'map'
 
-        def add_clusters(points, change_type):
+        def add_clusters(points, change_type, use_clustering=True):
             if len(points) == 0: return
+            
+            # --- NEW: Bypass Nearest Neighbor Clustering entirely ---
+            # If false, dumps all raw points directly into a single cluster package
+            if not use_clustering:
+                cc = ClusterChange()
+                cc.change_type = change_type
+                for pt in points:
+                    cc.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
+                update_msg.clusters.append(cc)
+                return
+
+            # --- STANDARD: Spatial Clustering for basic Positive/Negative ---
             tree = KDTree(points)
             pairs = tree.query_pairs(r=0.3)
             adj = {i: [] for i in range(len(points))}
@@ -119,15 +100,13 @@ class ClusterCreatorNode(Node):
                         cc.points.append(Point(x=float(pt[0]), y=float(pt[1]), z=0.0))
                     update_msg.clusters.append(cc)
 
-        # Add the packages
-        add_clusters(both_pos, ClusterChange.POSITIVE_CHANGE)
+        # Standard changes use nearest-neighbor grouping to filter out floating noise
+        add_clusters(both_pos, ClusterChange.POSITIVE_CHANGE, use_clustering=True)
+        add_clusters(both_neg, ClusterChange.NEGATIVE_CHANGE, use_clustering=True)
         
-        # Restore walls (These are now mathematically guaranteed to work)
-        add_clusters(valid_wall_restoration, ClusterChange.NEGATIVE_TO_POSITIVE)
-        
-        # Erase using the dilated points!
-        add_clusters(safe_standard_neg, ClusterChange.NEGATIVE_CHANGE)
-        add_clusters(safe_pos_to_neg, ClusterChange.POSITIVE_TO_NEGATIVE)
+        # State transitions (Pos->Neg, Neg->Pos) are applied raw, bypassing eraser/clustering
+        add_clusters(submap_only_pos, ClusterChange.NEGATIVE_TO_POSITIVE, use_clustering=False)
+        add_clusters(submap_only_neg, ClusterChange.POSITIVE_TO_NEGATIVE, use_clustering=False)
 
         if len(update_msg.clusters) > 0:
             self.pub_update.publish(update_msg)

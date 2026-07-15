@@ -6,4 +6,5 @@ src/aws-robomaker-bookstore-world
 saves/
 .vscode/
 cafe/
+Training/
 message.txt

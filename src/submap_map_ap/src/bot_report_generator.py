@@ -35,10 +35,10 @@ class BotReportGenerator(Node):
         
         # 4. Subscribers
         self.sub_occupied_count = self.create_subscription(
-            Int32, '/internal_occupied_count', self.count_callback, 10)
+            Int32, '/internal_occupied_count', self.count_callback, latching_qos)
             
         self.sub_overall_changes = self.create_subscription(
-            OccupancyGrid, '/overall_changes', self.changes_callback, 10)
+            OccupancyGrid, '/overall_changes', self.changes_callback, latching_qos)
             
         # Subscribe to submap with latching QoS to ensure we get the latest map
         self.sub_submap = self.create_subscription(
@@ -107,6 +107,7 @@ class BotReportGenerator(Node):
         raw_neg_cells = np.count_nonzero(changes_grid == -1)
         
         # Deflation Math: A 3x3 inflation turns 1 cell into 9. 
+        # Dividing by 9 gives us a much more accurate estimate of the actual points.
         deflation_factor = 6.0
         est_pos_cells = raw_pos_cells
         est_neg_cells = raw_neg_cells / deflation_factor
@@ -119,7 +120,8 @@ class BotReportGenerator(Node):
         self.save_map_files(save_dir, next_id)
 
         # 4. Generate & Display Matplotlib Report
-        self.generate_visual_report(save_dir, next_id, int(est_pos_cells), int(est_neg_cells), pos_pct, neg_pct, tot_pct)
+        # FIX: Pass the RAW cell counts so the text matches the visual pixels
+        self.generate_visual_report(save_dir, next_id, raw_pos_cells, raw_neg_cells, pos_pct, neg_pct, tot_pct)
         
         self.get_logger().info(f'Report #{next_id} successfully saved to {save_dir}')
 
@@ -161,19 +163,20 @@ free_thresh: 0.196
 
 
     def generate_visual_report(self, save_dir, map_id, pos_cells, neg_cells, pos_pct, neg_pct, tot_pct):
+        changes_2d = np.rot90(changes_2d)
         """Creates the Matplotlib diagnostic plot and saves it."""
         width = self.latest_changes_map.info.width
         height = self.latest_changes_map.info.height
         changes_2d = np.array(self.latest_changes_map.data, dtype=np.int8).reshape((height, width))
         
         # --- FIX: Create an RGB image so the map is actually readable ---
-        # Unknown (-1) -> Gray
+        # Unknown (-1) -> Red (Negative Change)
         # Free (0) -> White
-        # Occupied (>50) -> Red
+        # Occupied (>50) -> Green (Positive Change)
         display_img = np.zeros((height, width, 3), dtype=np.uint8)
-        display_img[changes_2d == -1] = [128, 128, 128]
+        display_img[changes_2d == -1] = [255, 0, 0]
         display_img[changes_2d == 0] = [255, 255, 255]
-        display_img[changes_2d > 50] = [255, 0, 0]
+        display_img[changes_2d > 50] = [0, 255, 0]
         
         plt.figure(figsize=(8, 8))
         
@@ -181,11 +184,11 @@ free_thresh: 0.196
         plt.imshow(display_img, origin='lower')
         plt.title(f"Diagnostic Report #{map_id}: /overall_changes")
         
-        # Create the report text block (now includes raw cell counts)
+        # Create the report text block (Updated to clarify raw pixels vs impact)
         report_text = (
             f"Base Internal Occupied Points: {self.latest_occupied_count}\n"
-            f"Est. Positive Change (Obstacles): {pos_cells} cells ({pos_pct:.2f}%)\n"
-            f"Est. Negative Change (Unexplored): {neg_cells} cells ({neg_pct:.2f}%)\n"
+            f"Positive Change (Green): {pos_cells} raw pixels (~{pos_pct:.2f}% impact)\n"
+            f"Negative Change (Red): {neg_cells} raw pixels (~{neg_pct:.2f}% impact)\n"
             f"Total Aggregate Change: {tot_pct:.2f}%"
         )
         
