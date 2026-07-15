@@ -20,7 +20,7 @@ class BotPositionTracker(Node):
         
         # 2. Publisher using the Latching QoS
         self.pub_is_lost = self.create_publisher(Bool, '/is_bot_lost', latching_qos)
-        
+        self.declare_parameter('confidence_threshold_lost', 0.25)
         # 3. Standard Subscriber to AMCL confidence
         self.sub_confidence = self.create_subscription(
             Float32,
@@ -34,13 +34,15 @@ class BotPositionTracker(Node):
         self.current_state = None
         
         self.get_logger().info('Tracker initialized. Monitoring /amcl_confidence...')
+        
 
     def confidence_callback(self, msg):
         confidence = msg.data
+        # Fetch the latest parameter value dynamically
+        threshold = self.get_parameter('confidence_threshold_lost').value
         
-        # Evaluate if confidence is below threshold
-        is_lost = confidence < 0.25
-        
+        # Evaluate if confidence is below the config threshold
+        is_lost = confidence < threshold
         # Only trigger publish if the state has actually changed (or on first run)
         if self.current_state != is_lost:
             self.current_state = is_lost

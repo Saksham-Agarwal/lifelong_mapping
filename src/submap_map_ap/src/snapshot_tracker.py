@@ -25,7 +25,9 @@ def get_shortest_angle_diff(angle1, angle2):
 class SnapshotTriggerNode(Node):
     def __init__(self):
         super().__init__('snapshot_trigger_node')
-        
+        self.declare_parameter('distance_threshold', 0.75)
+        self.declare_parameter('angle_threshold', 90)
+        self.declare_parameter('confidence_threshold', 0.65)
         # Subscriber for AMCL Pose
         self.pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -50,8 +52,8 @@ class SnapshotTriggerNode(Node):
         self.last_recorded_pose = None
         
         # Thresholds
-        self.distance_threshold = 0.75 # meters
-        self.angle_threshold = math.radians(90.0) # Convert 90 degrees to radians
+        self.distance_threshold = self.get_parameter('distance_threshold').value
+        self.angle_threshold = self.get_parameter('angle_threshold').value# Convert 90 degrees to radians
         
         self.get_logger().info('AMCL Distance & Angle Snapshot trigger node started.')
 
@@ -63,7 +65,7 @@ class SnapshotTriggerNode(Node):
         current_pose = msg.pose.pose
         
         # 1. Check if the confidence threshold is met
-        if self.current_confidence > 0.65:
+        if self.current_confidence > self.get_parameter('confidence_threshold').value:
             
             # 2. If this is the first valid pose, record it and wait for movement
             if self.last_recorded_pose is None:

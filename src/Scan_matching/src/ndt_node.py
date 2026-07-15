@@ -20,14 +20,15 @@ def expmap(delta):
     c, s = math.cos(theta), math.sin(theta)
     return np.array([[c, -s, x], [s, c, y], [0, 0, 1]])
 
-def compute_target_covariances(points, k=5):
+# Updated to accept config parameters
+def compute_target_covariances(points, k_neighbors, fallback_scale, regularization):
     tree = KDTree(points)
     covs = []
     for pt in points:
-        _, idxs = tree.query(pt, k=k)
+        _, idxs = tree.query(pt, k=k_neighbors)
         neighbors = points[idxs]
-        cov = np.cov(neighbors[:, :2], rowvar=False) if len(neighbors) > 1 else np.eye(2) * 1e-3
-        cov += np.eye(2) * 1e-5  
+        cov = np.cov(neighbors[:, :2], rowvar=False) if len(neighbors) > 1 else np.eye(2) * fallback_scale
+        cov += np.eye(2) * regularization  
         covs.append(cov)
     return np.array(covs)
 
@@ -35,7 +36,8 @@ def transform_points(trans_mat, points):
     homogenous_pts = np.hstack((points, np.ones((points.shape[0], 1))))
     return np.dot(trans_mat, homogenous_pts.T).T[:, :2]
 
-def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_res_deg=1.5, margin=0.2):
+# Updated to accept deadzone_deg parameter
+def filter_occluded_points(global_points, local_points, rx, ry, ryaw, deadzone_deg, angular_res_deg=1.5, margin=0.2):
     if len(global_points) == 0:
         return global_points, np.array([])
     angular_res = math.radians(angular_res_deg)
@@ -46,7 +48,10 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, angular_re
     global_angles = np.arctan2(global_shifted[:, 1], global_shifted[:, 0])
     global_radii = np.linalg.norm(global_shifted, axis=1)
     rel_global_angles = (global_angles - ryaw + np.pi) % (2 * np.pi) - np.pi
-    deadzone_mask = np.abs(rel_global_angles) > math.radians(70)
+    
+    # Using deadzone parameter here
+    deadzone_mask = np.abs(rel_global_angles) > math.radians(deadzone_deg)
+    
     local_bins = np.floor((local_angles + np.pi) / angular_res).astype(int)
     global_bins = np.floor((global_angles + np.pi) / angular_res).astype(int)
     num_bins = int(np.ceil(2 * np.pi / angular_res))
@@ -65,9 +70,46 @@ class NDTAlignerNode(Node):
         super().__init__('ndt_aligner_node')
         latching_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.map_bounds = None
-        self.sanity_dist_thresh = 0.5  
-        self.sanity_yaw_thresh = 0.5  
-        self.sanity_change_thresh = 50.0
+        
+        # 1. Declare Parameters
+        self.declare_parameter('sanity_dist_threshold', 0.5)
+        self.declare_parameter('sanity_yaw_threshold', 0.5)
+        self.declare_parameter('sanity_change_threshold', 50.0)
+        self.declare_parameter('deadzone_of_bot', 70.0)
+        self.declare_parameter('grid_comparison_size', 3.0)
+
+        self.declare_parameter('ndt_aligner.covariance.k_neighbors', 5)
+        self.declare_parameter('ndt_aligner.covariance.regularization', 1e-5)
+        self.declare_parameter('ndt_aligner.covariance.fallback_scale', 1e-3)
+        
+        self.declare_parameter('ndt_aligner.optimization.max_iterations', 15)
+        self.declare_parameter('ndt_aligner.optimization.damping_factor', 1e-5)
+        self.declare_parameter('ndt_aligner.optimization.convergence_threshold', 1e-4)
+        self.declare_parameter('ndt_aligner.optimization.min_corresponding_points', 5)
+        
+        self.declare_parameter('ndt_aligner.association.max_correspondence_distance', 0.3)
+        self.declare_parameter('ndt_aligner.association.weight_distance_threshold', 0.15)
+
+        # 2. Retrieve Parameters
+        self.sanity_dist_thresh = self.get_parameter('sanity_dist_threshold').value
+        self.sanity_yaw_thresh = self.get_parameter('sanity_yaw_threshold').value
+        self.sanity_change_thresh = self.get_parameter('sanity_change_threshold').value
+        self.deadzone_of_bot = self.get_parameter('deadzone_of_bot').value
+        self.grid_comparison_size = self.get_parameter('grid_comparison_size').value
+
+        self.k_neighbors = self.get_parameter('ndt_aligner.covariance.k_neighbors').value
+        self.regularization = self.get_parameter('ndt_aligner.covariance.regularization').value
+        self.fallback_scale = self.get_parameter('ndt_aligner.covariance.fallback_scale').value
+        
+        self.max_iterations = self.get_parameter('ndt_aligner.optimization.max_iterations').value
+        self.damping_factor = self.get_parameter('ndt_aligner.optimization.damping_factor').value
+        self.convergence_threshold = self.get_parameter('ndt_aligner.optimization.convergence_threshold').value
+        self.min_corresponding_points = self.get_parameter('ndt_aligner.optimization.min_corresponding_points').value
+        
+        self.max_correspondence_distance = self.get_parameter('ndt_aligner.association.max_correspondence_distance').value
+        self.weight_distance_threshold = self.get_parameter('ndt_aligner.association.weight_distance_threshold').value
+
+        # Subscribers and Publishers
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_snapshot = self.create_subscription(MapSnapshot, '/map_snapshot_data', self.snapshot_callback, 10)
         
@@ -75,7 +117,7 @@ class NDTAlignerNode(Node):
         self.pub_sanity = self.create_publisher(Bool, '/sanity_ndt', 10)
         self.pub_debug = self.create_publisher(String, '/ndt_debug_data', 10)
         
-        self.get_logger().info('NDT Aligner Node running.')
+        self.get_logger().info('NDT Aligner Node running with Config Parameters.')
 
     def bounds_callback(self, msg):
         self.map_bounds = msg
@@ -91,23 +133,23 @@ class NDTAlignerNode(Node):
         
         if len(raw_global_points) == 0 or len(raw_source_points) == 0: return
         
-        # Calculate raw scan count for accurate percentage math
         raw_scan_count = len(raw_source_points)
         amcl_x, amcl_y, amcl_yaw = msg.amcl_x, msg.amcl_y, msg.amcl_yaw
         
-        def crop_to_bbox(pts, cx, cy, margin=3.0):
+        def crop_to_bbox(pts, cx, cy, margin):
             if len(pts) == 0: return pts
             mask_x = (pts[:, 0] >= cx - margin) & (pts[:, 0] <= cx + margin)
             mask_y = (pts[:, 1] >= cy - margin) & (pts[:, 1] <= cy + margin)
             return pts[mask_x & mask_y]
 
-        source_points = crop_to_bbox(raw_source_points, amcl_x, amcl_y)
-        global_points = crop_to_bbox(raw_global_points, amcl_x, amcl_y)
-        submap_points = crop_to_bbox(raw_submap_points, amcl_x, amcl_y)
+        # Use config parameter for margin
+        source_points = crop_to_bbox(raw_source_points, amcl_x, amcl_y, self.grid_comparison_size)
+        global_points = crop_to_bbox(raw_global_points, amcl_x, amcl_y, self.grid_comparison_size)
+        submap_points = crop_to_bbox(raw_submap_points, amcl_x, amcl_y, self.grid_comparison_size)
 
         if len(source_points) == 0: return
 
-        # Phase 1: Independent NDT alignment (Passing is_submap flag)
+        # Phase 1: Independent NDT alignment
         global_res = self.process_ndt_pipeline(global_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=False)
         submap_res = self.process_ndt_pipeline(submap_points, source_points, amcl_x, amcl_y, amcl_yaw, raw_scan_count, is_submap=True)
 
@@ -159,7 +201,8 @@ class NDTAlignerNode(Node):
         if override_drift_mat is not None:
             drift_mat = override_drift_mat
         else:
-            target_covs = compute_target_covariances(centered_target)
+            # Pass config params to global function
+            target_covs = compute_target_covariances(centered_target, self.k_neighbors, self.fallback_scale, self.regularization)
             drift_mat = self.ndt_scan_matching(np.eye(3), centered_source, centered_target, target_covs)
         
         aligned_source_points = transform_points(drift_mat, centered_source) + center
@@ -168,10 +211,12 @@ class NDTAlignerNode(Node):
         true_x, true_y, true_yaw = amcl_x + dx, amcl_y + dy, amcl_yaw + dyaw
         drift_distance = math.hypot(dx, dy)
 
-        # Base Sanity Check
         sanity_ok = not (drift_distance > self.sanity_dist_thresh or abs(dyaw) > self.sanity_yaw_thresh)
 
-        visible_target, occluded_target = filter_occluded_points(target_points, aligned_source_points, true_x, true_y, true_yaw)
+        # Pass config param to global function
+        visible_target, occluded_target = filter_occluded_points(
+            target_points, aligned_source_points, true_x, true_y, true_yaw, self.deadzone_of_bot
+        )
         
         if len(visible_target) > 0:
             target_tree = KDTree(target_points) 
@@ -185,7 +230,9 @@ class NDTAlignerNode(Node):
 
         def strict_crop(pts):
             if len(pts) == 0: return pts
-            mask = (pts[:, 0] >= true_x - 3.0) & (pts[:, 0] <= true_x + 3.0) & (pts[:, 1] >= true_y - 3.0) & (pts[:, 1] <= true_y + 3.0)
+            # Use config parameter for margin
+            margin = self.grid_comparison_size
+            mask = (pts[:, 0] >= true_x - margin) & (pts[:, 0] <= true_x + margin) & (pts[:, 1] >= true_y - margin) & (pts[:, 1] <= true_y + margin)
             return pts[mask]
 
         if sanity_ok:
@@ -193,32 +240,27 @@ class NDTAlignerNode(Node):
             missing_target_points = strict_crop(missing_target_points)
             if len(unmatched_local_points) > 0:
                 u_shifted = unmatched_local_points - np.array([true_x, true_y])
-                u_in_fov = np.abs((np.arctan2(u_shifted[:, 1], u_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(70)
+                # Using deadzone config here
+                u_in_fov = np.abs((np.arctan2(u_shifted[:, 1], u_shifted[:, 0]) - true_yaw + np.pi) % (2 * np.pi) - np.pi) <= math.radians(self.deadzone_of_bot)
                 unmatched_local_points = unmatched_local_points[u_in_fov]
         
-        # --- CALCULATE RATIOS ---
         pos_count = len(unmatched_local_points)
         neg_count = len(missing_target_points)
         
         pos_ratio = (pos_count / raw_scan_count * 100) if raw_scan_count > 0 else 0.0
         
-        # --- THE FIX: Denominator is now strictly the EXPECTED VISIBLE points ---
         expected_visible_cropped = strict_crop(visible_target)
         total_visible_map_points = len(expected_visible_cropped)
         
         neg_ratio = (neg_count / total_visible_map_points * 100) if total_visible_map_points > 0 else 0.0
 
-        # --- DYNAMIC SANITY CHECK (50% Threshold applied ONLY to Submap) ---
         if is_submap and sanity_ok and (pos_ratio > self.sanity_change_thresh or neg_ratio > self.sanity_change_thresh):
             sanity_ok = False
             self.get_logger().warn(f"NDT Sanity Failed! Massive SUBMAP changes detected (Pos: {pos_ratio:.1f}%, Neg: {neg_ratio:.1f}%).")
 
-        # --- APPLY FAILURES (Zeroing logic for visualizer) ---
         if not sanity_ok:
             aligned_source_points, true_x, true_y, true_yaw = source_points, amcl_x, amcl_y, amcl_yaw
             dx, dy, dyaw = 0.0, 0.0, 0.0
-            
-            # Reset visual data so it doesn't plot massive garbage
             unmatched_local_points = np.array([])
             missing_target_points = np.array([])
             pos_count, neg_count = 0, 0
@@ -259,7 +301,6 @@ class NDTAlignerNode(Node):
     def publish_debug_data(self, snap_msg, source, global_tgt, submap_tgt, global_res, submap_res):
         def serialize_res(r):
             if not r: return None
-            # Convert NumPy arrays to lists for JSON
             return {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in r.items()}
             
         data = {
@@ -273,17 +314,19 @@ class NDTAlignerNode(Node):
         self.pub_debug.publish(String(data=json.dumps(data)))
 
     def ndt_scan_matching(self, trans_mat, source_points, target_points, target_covs):
-        max_iter_num, damping = 15, 1e-5  
         kdtree = KDTree(target_points)
-        for iter_num in range(max_iter_num):
+        for iter_num in range(self.max_iterations):
             H, b = np.zeros((3, 3)), np.zeros(3)
             R, corresponding_points_num = trans_mat[:2, :2], 0
             for i in range(len(source_points)):
                 pt = np.array([source_points[i][0], source_points[i][1], 1.0])
                 query = np.dot(trans_mat, pt)[:2]
                 dist, idx = kdtree.query(query)
-                if dist > 0.3: continue
-                weight = 1.0 if dist <= 0.15 else 0.15 / dist
+                
+                # Replaced hardcoded limits with Config limits
+                if dist > self.max_correspondence_distance: continue
+                weight = 1.0 if dist <= self.weight_distance_threshold else self.weight_distance_threshold / dist
+                
                 target = target_points[idx]
                 C = np.eye(3)
                 C[0:2, 0:2] = target_covs[idx]
@@ -297,13 +340,18 @@ class NDTAlignerNode(Node):
                 H += weight * np.dot(J.T, np.dot(IM, J))
                 b += weight * np.dot(J.T, np.dot(IM, error))
                 corresponding_points_num += 1
-            if corresponding_points_num < 5: break
-            H += np.eye(3) * damping
+                
+            # Replaced hardcoded variables with Config 
+            if corresponding_points_num < self.min_corresponding_points: break
+            H += np.eye(3) * self.damping_factor
+            
             try: delta = np.linalg.solve(H, -b)
             except: break
             update = np.dot(delta, delta)
             trans_mat = np.dot(trans_mat, expmap(delta))
-            if update < 1e-4: break
+            
+            # Replaced hardcoded threshold with Config
+            if update < self.convergence_threshold: break
         return trans_mat
 
 def main(args=None):

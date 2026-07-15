@@ -23,12 +23,12 @@ def generate_launch_description():
     )
     
     return LaunchDescription([
-        Node(
-            package=pkg_name,
-            executable='bridge.py',
-            name='qos_bridge',
-            output='screen'
-        ),
+        # Node(
+        #     package=pkg_name,
+        #     executable='bridge.py',
+        #     name='qos_bridge',
+        #     output='screen'
+        # ),
         # 1. Generates the global map crop
         Node(
             package=pkg_name,

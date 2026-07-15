@@ -20,9 +20,11 @@ class GlobalChangesUpdater(Node):
         
         self.pub_grid = self.create_publisher(OccupancyGrid, '/overall_changes', latching_qos)
         
+        self.declare_parameter('min_cluster_size', 10)
+
         # --- NEW: Noise Filtering Threshold ---
         # Ignore any change cluster with fewer than this many points
-        self.min_cluster_size = 10
+        self.min_cluster_size = self.get_parameter('min_cluster_size').value
         
         self.grid_msg = None
         self.get_logger().info('Global Changes Updater running. Waiting for /map_bounds...')

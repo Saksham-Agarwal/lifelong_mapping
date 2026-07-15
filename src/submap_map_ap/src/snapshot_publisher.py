@@ -30,7 +30,7 @@ class SnapshotPublisher(Node):
         self.snap = self.create_subscription(Bool, '/take_snapshot', self.snap_callback, 10)
         
         self.pub_snapshot = self.create_publisher(MapSnapshot, '/map_snapshot_data', 10)
-        
+        self.declare_parameter('cooldown_seconds', 5)
         self.local_msg = None
         self.submap_msg = None
         self.scan_msg = None
@@ -39,7 +39,7 @@ class SnapshotPublisher(Node):
         
         # --- NEW: Cooldown tracking variables ---
         self.last_snap_time = 0.0
-        self.cooldown_seconds = 5.0  # Prevents spamming triggers for 5 seconds
+        self.cooldown_seconds = self.get_parameter('cooldown_seconds').value  # Prevents spamming triggers for 5 seconds
         
         self.get_logger().info('Waiting for map, scan, AMCL, and confidence topics...')
 

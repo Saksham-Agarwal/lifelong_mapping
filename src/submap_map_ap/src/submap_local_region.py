@@ -14,9 +14,9 @@ class SubmapLocalRegion(Node):
 
     def __init__(self):
         super().__init__('submap_local_region')
-
+        self.declare_parameter('grid_size', 8)
         self.costmap = None
-        self.side_length = 8 # meters
+        self.side_length = self.get_parameter('grid_size').value
 
         map_qos = QoSProfile(
             depth=1,
