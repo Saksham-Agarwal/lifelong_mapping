@@ -13,10 +13,12 @@ from tf2_ros import Buffer, TransformListener, TransformException
 class CostmapGenerator(Node):
 
     def __init__(self):
-        super().__init__('costmap_generator')
+        super().__init__('local_costmap_generator')
 
         self.costmap = None
-        self.side_length = 8 # meters
+        self.declare_parameter('grid_size_length', 8)
+        self.side_length = self.get_parameter('grid_size_length').value
+        
 
         map_qos = QoSProfile(
             depth=1,

@@ -6,23 +6,31 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 install(PROGRAMS
+  src/bridge.py
   src/costmap_generator.py
-  src/local_costmap_simplifier.py
-  src/costmap_aligner.py
-  src/costmap_change_detector.py
-  src/scan_to_costmap_generator.py
-  src/local_region_inflated_map.py
-  src/nearest_neighbour_check.py
-  src/cluster_labelers.py
-  src/unexplored_to_free_space.py
+  # src/local_costmap_simplifier.py
+  # src/costmap_aligner.py
+  # src/costmap_change_detector.py
+  # src/scan_to_costmap_generator.py
+  # src/local_region_inflated_map.py
+  # src/nearest_neighbour_check.py
+  # src/cluster_labelers.py
+  # src/unexplored_to_free_space.py
   src/amcl_confidence.py
-  src/change_labeler.py
-  src/grid_spatial.py
-  src/robot_grid_tracker.py
-  src/tracked_map_changes.py
-  src/change_tracker.py
-  src/global_memory_visualiser.py
-  src/orb_match.py
+  # src/change_labeler.py
+  # src/grid_spatial.py
+  # src/robot_grid_tracker.py
+  # src/tracked_map_changes.py
+  # src/global_memory_visualiser.py
+  # src/map_bounds.py
+  src/snapshot_publisher.py
+  src/snapshot_tracker.py
+  src/map_bounds_publisher.py 
+  src/submap.py
+  src/submap_local_region.py
+  src/occupied_cell_publisher.py
+  src/bot_pos_stat_tracker.py
+  src/bot_report_generator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -46,6 +54,14 @@ install(DIRECTORY params
   DESTINATION share/${PROJECT_NAME}
 )
 
+
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY world
+  DESTINATION share/${PROJECT_NAME}
+)
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclpy REQUIRED)
@@ -54,6 +70,7 @@ find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+
 # uncomment the following section in order to fill in
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
@@ -62,13 +79,18 @@ find_package(tf2_ros REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/GridObjectList.msg"
-  "msg/MapGridSummary.msg"
-  "msg/GridBounds.msg"           
-  "msg/MapGridDefinition.msg"  
-  "msg/ChangeObject.msg"
-  "msg/ChangeList.msg"
-  DEPENDENCIES std_msgs
+  # "msg/GridObjectList.msg"
+  # "msg/MapGridSummary.msg"
+  # "msg/GridBounds.msg"           
+  # "msg/MapGridDefinition.msg"  
+  # "msg/ChangeObject.msg"
+  # "msg/ChangeList.msg"
+  "msg/MapSnapshot.msg"
+  "msg/MapBounds.msg"
+  "msg/ClusterChange.msg"
+  "msg/MapUpdate.msg"
+  "msg/AlignedMapChanges.msg"
+  DEPENDENCIES std_msgs geometry_msgs sensor_msgs
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -1,0 +1,69 @@
+/**:
+  ros__parameters:
+    deadzone_of_bot: 70.0
+    use_sim_time: true
+    map_path: "/home/saksham-22/lifelong_mapping/src/submap_map_ap/map/bookstore/map.yaml"
+
+global_change_updater:
+  ros__parameters:
+    min_cluster_size: 10
+
+ndt_node:
+  ros__parameters:
+    sanity_dist_threshold: 0.5       
+    sanity_yaw_threshold: 0.5        
+    sanity_change_threshold: 50.0                  
+    grid_comparison_size: 3.0          
+
+    ndt_aligner:
+      covariance:
+        k_neighbors: 5
+        regularization: 1e-5
+        fallback_scale: 1e-3
+      optimization:
+        max_iterations: 15
+        damping_factor: 1e-5
+        convergence_threshold: 1e-4
+        min_corresponding_points: 5
+      association:
+        max_correspondence_distance: 0.3
+        weight_distance_threshold: 0.15
+
+ndt_visualizer_node:
+  ros__parameters:
+    ndt_visualise: False
+    save_dir_path: "/home/saksham-22/snapshots"  
+AMCL_Confidence:
+  ros__parameters:
+    k: 0.5
+
+bot_position_tracker:
+  ros__parameters:
+    confidence_threshold_lost: 0.25   
+
+local_costmap_generator:
+  ros__parameters:
+    grid_size_length: 8                    
+
+map_analytics_publisher:
+  ros__parameters:
+    wall_inclusion: False
+
+snapshot_publisher:
+  ros__parameters:
+    cooldown_seconds: 5
+
+snapshot_trigger_node:
+  ros__parameters:
+    distance_threshold: 0.5
+    angle_threshold: 45
+    confidence_threshold: 0.55
+
+bot_report_generator: 
+  ros__parameters:
+    Report_Save_Location: '/home/saksham-22/map/Training'
+    occupied_cells_diluter: 2.5
+
+submap_local_region:
+  ros__parameters:
+    grid_size: 8

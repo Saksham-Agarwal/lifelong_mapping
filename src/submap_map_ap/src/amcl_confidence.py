@@ -10,9 +10,9 @@ class MinimalSubscriber(Node):
 
     def __init__(self):
 
-        super().__init__('AMCL_Confidence_subscriber')
+        super().__init__('AMCL_Confidence')
         
-        self.declare_parameter('angle_relevance', 0.5)
+        self.declare_parameter('k', 0.5)
 
         self.subscription = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -31,7 +31,7 @@ class MinimalSubscriber(Node):
         # self.get_logger().info('Uncertainty in y axis  : "%s"' % msg.pose.covariance[7])
         # self.get_logger().info('Uncertainty in yaw axis: "%s"' % msg.pose.covariance[35])
         
-        k = self.get_parameter('angle_relevance').value
+        k = self.get_parameter('k').value
 
         pose_uncertainty = (msg.pose.covariance[0] + msg.pose.covariance[7])
         angle_uncertainty = msg.pose.covariance[35]

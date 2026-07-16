@@ -18,8 +18,7 @@ source /opt/ros/humble/setup.bash
 
 case "$1" in
     "warehouse")
-        ros2 launch submap_map_ap bookstore_turtlebot.launch.py
-        ;;
+        ros2 launch turtlebot3_gazebo turtlebot3_house.launch.py
     "localization")
         cd ~/lifelong_mapping || exit
         ros2 launch nav2_bringup localization_launch.py map:=src/submap_map_ap/map/bookstore/map.yaml use_sim_time:=true

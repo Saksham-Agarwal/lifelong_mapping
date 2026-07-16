@@ -17,7 +17,7 @@ ros2 launch submap_map_ap warehouse_turtlebot.launch.py
 Start SLAM Toolbox:
 
 ```bash
-ros2 launch slam_toolbox online_async_launch.py use_sim_time:=True
+ros2 launch slam_toolbox online_async_launch.py 
 ```
 
 Drive the robot around the environment to build a map.
@@ -40,13 +40,13 @@ This will generate:
 ### Localization
 
 ```bash
-ros2 launch nav2_bringup localization_launch.py map:=src/submap_map_ap/map/map.yaml
+ros2 launch nav2_bringup localization_launch.py map:=src/submap_map_ap/map/Training/map_2.yaml
 ```
 
 ### Navigation
 
 ```bash
-ros2 launch nav2_bringup navigation_launch.py map:=src/submap_map_ap/map/map.yaml
+ros2 launch nav2_bringup navigation_launch.py map:=src/submap_map_ap/map/Training/map_2.yaml
 ```
 
 
@@ -55,7 +55,7 @@ ros2 launch nav2_bringup navigation_launch.py map:=src/submap_map_ap/map/map.yam
 ## 4. Launch RViz
 
 ```bash
-ros2 run rviz2 rviz2 -d /opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz
+ros2 run rviz2 rviz2 -d /opt/ros/jazzy/share/nav2_bringup/rviz/nav2_default_view.rviz
 ```
 
 ---
@@ -83,6 +83,13 @@ pose:
 Alternatively, use the **2D Pose Estimate** tool in RViz.
 
 ---
+```bash
+ros2 run laser_filters scan_to_scan_filter_chain \
+  --ros-args --params-file laser_filter_config.yaml \
+  -r /scan:=/scan_raw \
+  -r /scan_filtered:=/scan_reliable
+
+```
 
 ## 6. Run the Change Detector
 

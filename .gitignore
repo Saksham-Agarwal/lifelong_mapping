@@ -3,4 +3,9 @@ install/
 log/
 src/aws-robomaker-small-warehouse-world
 src/aws-robomaker-bookstore-world
+saves/
 .vscode/
+cafe/
+Training/
+message.txt
+Archived/
