@@ -31,7 +31,7 @@ ndt_node:
 
 ndt_visualizer_node:
   ros__parameters:
-    ndt_visualise: False
+    ndt_visualise: True
     save_dir_path: "/home/saksham-22/snapshots"  
 AMCL_Confidence:
   ros__parameters:

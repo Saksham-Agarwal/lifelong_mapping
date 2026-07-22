@@ -22,7 +22,7 @@ class GlobalChangesUpdater(Node):
         
         self.declare_parameter('min_cluster_size', 10)
 
-        # --- NEW: Noise Filtering Threshold ---
+        # --- Noise Filtering Threshold ---
         # Ignore any change cluster with fewer than this many points
         self.min_cluster_size = self.get_parameter('min_cluster_size').value
         
@@ -60,7 +60,7 @@ class GlobalChangesUpdater(Node):
         current_data = list(self.grid_msg.data)
         
         for cluster in msg.clusters:
-            # --- NEW: Filter out noise ---
+            # --- Filter out noise ---
             if len(cluster.points) < self.min_cluster_size:
                 continue
                 
@@ -69,11 +69,15 @@ class GlobalChangesUpdater(Node):
                 grid_value = 100  # Lethal Obstacle
             elif cluster.change_type == ClusterChange.NEGATIVE_CHANGE:
                 grid_value = -1   # Unknown / Unexplored (Negative Space)
-            
             elif cluster.change_type == ClusterChange.NEGATIVE_TO_POSITIVE:
                 grid_value = 100  # Lethal Obstacle
             elif cluster.change_type == ClusterChange.POSITIVE_TO_NEGATIVE:
                 grid_value = -1   # Unknown / Unexplored (Negative Space)   
+                
+            # --- NEW: Process the 50 tags directly ---
+            elif cluster.change_type == 50:
+                grid_value = 50   # Cleared Unexplored Free Space
+                
             else:
                 continue
 

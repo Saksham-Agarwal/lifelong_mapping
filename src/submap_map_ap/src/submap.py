@@ -35,7 +35,7 @@ class SubmapGenerator(Node):
             latching_qos
         )
         
-        # Subscriber to the overall changes (using default QoS, adjust if this topic is also latched)
+        # Subscriber to the overall changes 
         self.changes_sub = self.create_subscription(
             OccupancyGrid,
             '/overall_changes',
@@ -62,7 +62,6 @@ class SubmapGenerator(Node):
             return
 
         # Convert ROS messages to NumPy arrays for fast vectorized operations
-        # Note: OccupancyGrid data is a list of int8 [-1, 100]
         base_map_arr = np.array(self.base_map_msg.data, dtype=np.int8)
         changes_arr = np.array(msg.data, dtype=np.int8)
         
@@ -70,17 +69,18 @@ class SubmapGenerator(Node):
         submap_arr = np.copy(base_map_arr)
         
         # --- Rule 1: If occupied (100) on /overall_changes -> map as occupied (100) in submap
-        # (Assuming 100 is the strict value for occupied. If you use a threshold like > 65, change this to changes_arr >= 65)
         occupied_in_changes = (changes_arr == 100)
         submap_arr[occupied_in_changes] = 100
         
         # --- Rule 2: If unexplored (-1) on /overall_changes AND occupied (100) on /map -> map as free (0) in submap
         unexplored_in_changes = (changes_arr == -1)
         occupied_in_base = (base_map_arr == 100)
-        
-        # Find where BOTH conditions are true using bitwise AND (&)
         condition_to_free = unexplored_in_changes & occupied_in_base
         submap_arr[condition_to_free] = 0
+        
+        # --- Rule 3: If marked as cleared unexplored (50) on /overall_changes -> map as free (0) in submap
+        cleared_unexplored = (changes_arr == 50)
+        submap_arr[cleared_unexplored] = 0
         
         # Construct the new OccupancyGrid message
         submap_msg = OccupancyGrid()
@@ -97,7 +97,6 @@ class SubmapGenerator(Node):
         # Publish the new map
         self.submap_pub.publish(submap_msg)
         self.get_logger().debug("Published updated /submap_map.")
-
 
 def main(args=None):
     rclpy.init(args=args)
