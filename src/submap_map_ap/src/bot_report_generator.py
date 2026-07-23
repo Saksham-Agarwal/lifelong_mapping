@@ -16,10 +16,9 @@ class BotReportGenerator(Node):
     def __init__(self):
         super().__init__('bot_report_generator')
         
-        # 1. Parameter for the save directory 
-        # (Default assumes you are running from a standard ROS2 workspace)
-        default_dir = '~/lifelong_mapping/src/submap_map_ap/map/Training'
-        self.declare_parameter('Report_Save_Location', default_dir)
+        # 1. Declare parameters without hardcoded fallbacks
+        # These will be pulled directly from submap_map.yaml
+        self.declare_parameter('Report_Save_Location', rclpy.Parameter.Type.STRING)
         self.declare_parameter('occupied_cells_diluter', 2.5)
 
         # 2. Caches for the data
@@ -134,8 +133,13 @@ class BotReportGenerator(Node):
             self.get_logger().error('Internal occupied count is 0. Cannot divide by zero!')
             return
 
-        # 1. Setup Directory
-        raw_dir = self.get_parameter('Report_Save_Location').get_parameter_value().string_value
+        # 1. Setup Directory from Parameters
+        raw_dir = self.get_parameter('Report_Save_Location').value
+        
+        if not raw_dir:
+            self.get_logger().error("Report_Save_Location parameter is missing or empty!")
+            return
+            
         save_dir = os.path.expanduser(raw_dir) # Expands '~' to /home/username
         os.makedirs(save_dir, exist_ok=True)
         

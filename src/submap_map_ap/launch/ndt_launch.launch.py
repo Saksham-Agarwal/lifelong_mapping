@@ -87,6 +87,34 @@ def generate_launch_description():
         output='screen'
     )
 
+    # ... (your existing node definitions) ...
+
+    # Add the Lifecycle Manager
+    lifecycle_manager_cmd = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_ndt',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,  # Match this to your system
+            'autostart': True,
+            'node_names': [
+                'ndt_node',
+                'global_changes_updater',
+                'submap_generator_node'
+                
+                # Note: Only list the nodes in THIS launch file that are LifecycleNodes
+            ],
+            'bond_timeout': 0.0
+        }]
+    )
+
+
+
+    # ... (your existing add_actions) ...
+
+
+
     # ---------------------------------------------------------
     # Create and Populate Launch Description
     # ---------------------------------------------------------
@@ -101,5 +129,7 @@ def generate_launch_description():
     ld.add_action(global_change_update_cmd)
     ld.add_action(ndt_visualizer_cmd)
     ld.add_action(cluster_creator_cmd)
+    ld.add_action(lifecycle_manager_cmd) # Add the manager to the launch description
+
 
     return ld

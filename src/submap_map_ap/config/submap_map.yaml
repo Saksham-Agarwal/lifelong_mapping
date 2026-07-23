@@ -33,6 +33,7 @@ ndt_visualizer_node:
   ros__parameters:
     ndt_visualise: True
     save_dir_path: "/home/saksham-22/snapshots"  
+
 AMCL_Confidence:
   ros__parameters:
     k: 0.5
@@ -67,3 +68,7 @@ bot_report_generator:
 submap_local_region:
   ros__parameters:
     grid_size: 8
+
+recovery_manager_node:
+  ros__parameters:
+    Report_Save_Location: '/home/saksham-22/map/Training'

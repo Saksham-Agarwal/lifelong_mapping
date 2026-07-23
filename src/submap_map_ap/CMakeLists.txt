@@ -31,6 +31,7 @@ install(PROGRAMS
   src/occupied_cell_publisher.py
   src/bot_pos_stat_tracker.py
   src/bot_report_generator.py
+  src/recovery_manager.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
