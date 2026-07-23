@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import Node, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import Int32
@@ -15,6 +15,15 @@ class MapAnalyticsPublisher(Node):
         
         # 1. Declare Parameter
         self.declare_parameter('wall_inclusion', False)
+        
+        # Initialize component variables to None until configured
+        self.sub_map = None
+        self.pub_internal_occupied = None
+        
+        self.published = False
+
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Configuring Map Analytics Publisher...')
         
         # QoS Profile: Reliable and Transient Local (Latching)
         latching_qos = QoSProfile(
@@ -32,10 +41,35 @@ class MapAnalyticsPublisher(Node):
         )
         
         # Publisher for the occupied points count
-        self.pub_internal_occupied = self.create_publisher(Int32, '/internal_occupied_count', latching_qos)
+        self.pub_internal_occupied = self.create_lifecycle_publisher(
+            Int32, 
+            '/internal_occupied_count', 
+            latching_qos
+        )
         
-        self.published = False
         self.get_logger().info('Waiting for /map to calculate occupied points...')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Activating Map Analytics Publisher.')
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Deactivating Map Analytics Publisher.')
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Cleaning up Map Analytics Publisher.')
+        if self.sub_map: self.destroy_subscription(self.sub_map)
+        if self.pub_internal_occupied: self.destroy_publisher(self.pub_internal_occupied)
+        
+        # Allow the node to calculate and publish again if re-configured
+        self.published = False
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Shutting down Map Analytics Publisher.')
+        return TransitionCallbackReturn.SUCCESS
 
     def map_callback(self, msg):
         # Process and publish this once

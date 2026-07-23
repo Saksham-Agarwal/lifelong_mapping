@@ -1,7 +1,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode
 
 def generate_launch_description():
     # Resolve the path to the centralized configuration file
@@ -10,28 +10,31 @@ def generate_launch_description():
 
     return LaunchDescription([
         # 1. Map Analytics Node
-        Node(
+        LifecycleNode(
             package='submap_map_ap',
             executable='occupied_cell_publisher.py', 
             name='map_analytics_publisher',
+            namespace='',
             parameters=[config_file_path],
             output='screen'
         ),
         
         # 2. Position Tracker Node
-        Node(
+        LifecycleNode(
             package='submap_map_ap',
             executable='bot_pos_stat_tracker.py', 
             name='bot_position_tracker',
+            namespace='',
             parameters=[config_file_path],
             output='screen'
         ),
         
         # 3. State Verifier Node
-        Node(
+        LifecycleNode(
             package='submap_map_ap',
             executable='bot_report_generator.py', 
             name='bot_report_generator',
+            namespace='',
             output='screen',
             parameters=[config_file_path]
         )

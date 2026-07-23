@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import Node, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from geometry_msgs.msg import Point
 from std_msgs.msg import Bool, String, Float64MultiArray
@@ -16,8 +16,7 @@ from submap_map_ap.msg import AlignedMapChanges
 def skewd(p): return np.array([-p[1], p[0]])
 def expmap(delta):
     x, y, theta = delta[0], delta[1], delta[2]
-    c, s = math.cos(theta), math.sin(theta)
-    return np.array([[c, -s, x], [s, c, y], [0, 0, 1]])
+    return np.array([[math.cos(theta), -math.sin(theta), x], [math.sin(theta), math.cos(theta), y], [0, 0, 1]])
 
 def compute_target_covariances(points, k_neighbors, fallback_scale, regularization):
     tree = KDTree(points)
@@ -64,11 +63,11 @@ def filter_occluded_points(global_points, local_points, rx, ry, ryaw, deadzone_d
 class NDTAlignerNode(Node):
     def __init__(self):
         super().__init__('ndt_aligner_node')
-        latching_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-        self.map_bounds = None
         
+        self.map_bounds = None
         self.publish_unexplored_debug = True 
         
+        # Parameter Declarations
         self.declare_parameter('sanity_dist_threshold', 0.5)
         self.declare_parameter('sanity_yaw_threshold', 0.5)
         self.declare_parameter('sanity_change_threshold', 50.0)
@@ -84,7 +83,19 @@ class NDTAlignerNode(Node):
         self.declare_parameter('ndt_aligner.optimization.min_corresponding_points', 5)
         self.declare_parameter('ndt_aligner.association.max_correspondence_distance', 0.3)
         self.declare_parameter('ndt_aligner.association.weight_distance_threshold', 0.15)
+        
+        # Initialize component variables to None until configured
+        self.sub_bounds = None
+        self.sub_snapshot = None
+        self.pub_changes = None
+        self.pub_drift = None
+        self.pub_sanity = None
+        self.pub_debug = None
+        self.pub_unexp_debug = None
 
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Configuring NDT Aligner Node...')
+        
         self.sanity_dist_thresh = self.get_parameter('sanity_dist_threshold').value
         self.sanity_yaw_thresh = self.get_parameter('sanity_yaw_threshold').value
         self.sanity_change_thresh = self.get_parameter('sanity_change_threshold').value
@@ -100,16 +111,44 @@ class NDTAlignerNode(Node):
         self.max_correspondence_distance = self.get_parameter('ndt_aligner.association.max_correspondence_distance').value
         self.weight_distance_threshold = self.get_parameter('ndt_aligner.association.weight_distance_threshold').value
 
+        latching_qos = QoSProfile(depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_snapshot = self.create_subscription(MapSnapshot, '/map_snapshot_data', self.snapshot_callback, 10)
         
-        self.pub_changes = self.create_publisher(AlignedMapChanges, '/aligned_map_changes', 10)
-        self.pub_drift = self.create_publisher(Float64MultiArray, '/ndt_drift_mat', 10)
-        self.pub_sanity = self.create_publisher(Bool, '/sanity_ndt', 10)
-        self.pub_debug = self.create_publisher(String, '/ndt_debug_data', 10)
-        self.pub_unexp_debug = self.create_publisher(String, '/unexplored_debug_data', 10)
+        self.pub_changes = self.create_lifecycle_publisher(AlignedMapChanges, '/aligned_map_changes', 10)
+        self.pub_drift = self.create_lifecycle_publisher(Float64MultiArray, '/ndt_drift_mat', 10)
+        self.pub_sanity = self.create_lifecycle_publisher(Bool, '/sanity_ndt', 10)
+        self.pub_debug = self.create_lifecycle_publisher(String, '/ndt_debug_data', 10)
+        self.pub_unexp_debug = self.create_lifecycle_publisher(String, '/unexplored_debug_data', 10)
         
-        self.get_logger().info('NDT Aligner Node running with Exact Negative Space Logic for Unexplored Cells.')
+        self.get_logger().info('NDT Aligner Node configured with Exact Negative Space Logic for Unexplored Cells.')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Activating NDT Aligner Node.')
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Deactivating NDT Aligner Node.')
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Cleaning up NDT Aligner Node.')
+        if self.sub_bounds: self.destroy_subscription(self.sub_bounds)
+        if self.sub_snapshot: self.destroy_subscription(self.sub_snapshot)
+        if self.pub_changes: self.destroy_publisher(self.pub_changes)
+        if self.pub_drift: self.destroy_publisher(self.pub_drift)
+        if self.pub_sanity: self.destroy_publisher(self.pub_sanity)
+        if self.pub_debug: self.destroy_publisher(self.pub_debug)
+        if self.pub_unexp_debug: self.destroy_publisher(self.pub_unexp_debug)
+        
+        self.map_bounds = None
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Shutting down NDT Aligner Node.')
+        return TransitionCallbackReturn.SUCCESS
 
     def bounds_callback(self, msg):
         self.map_bounds = msg
@@ -375,7 +414,9 @@ class NDTAlignerNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    try: rclpy.spin(NDTAlignerNode())
+    try: 
+        # Standard spin works fine with lifecycle nodes; use lifecycle manager / cli / launch file for transitions
+        rclpy.spin(NDTAlignerNode())
     except KeyboardInterrupt: pass
     finally: rclpy.shutdown()
 

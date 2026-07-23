@@ -1,7 +1,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch_ros.actions import Node
+from launch_ros.actions import Node, LifecycleNode
 
 def generate_launch_description():
     # Resolve the path to the centralized configuration file
@@ -36,18 +36,20 @@ def generate_launch_description():
         output='screen'
     )
 
-    ndt_node_cmd = Node(
+    ndt_node_cmd = LifecycleNode(
         package='Scan_matching',
         executable='ndt_node.py',
         name='ndt_node',
+        namespace='',
         parameters=[config_file_path],
         output='screen'
     )
 
-    submap_node_cmd = Node(
+    submap_node_cmd = LifecycleNode(
         package='submap_map_ap',
         executable='submap.py',
         name='submap_generator_node',
+        namespace='',
         parameters=[config_file_path],
         output='screen'
     )
@@ -76,10 +78,11 @@ def generate_launch_description():
         output='screen'
     )
 
-    global_change_update_cmd = Node(
+    global_change_update_cmd = LifecycleNode(
         package='Scan_matching',
         executable='global_changes_updater.py',
         name='global_changes_updater',
+        namespace='',
         parameters=[config_file_path],
         output='screen'
     )

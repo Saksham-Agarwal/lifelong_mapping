@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import Node, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
@@ -10,6 +10,17 @@ class SubmapGenerator(Node):
     def __init__(self):
         super().__init__('submap_generator_node')
         
+        # Store the latest map
+        self.base_map_msg = None
+        
+        # Initialize component variables to None until configured
+        self.submap_pub = None
+        self.map_sub = None
+        self.changes_sub = None
+
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Configuring Submap Generator Node...")
+        
         # QoS Profile: Reliable and Transient Local (Latching)
         latching_qos = QoSProfile(
             depth=1,
@@ -17,11 +28,8 @@ class SubmapGenerator(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
         
-        # Store the latest map
-        self.base_map_msg = None
-        
         # Publisher for the new submap
-        self.submap_pub = self.create_publisher(
+        self.submap_pub = self.create_lifecycle_publisher(
             OccupancyGrid, 
             '/submap_map', 
             latching_qos
@@ -43,7 +51,29 @@ class SubmapGenerator(Node):
             10
         )
         
-        self.get_logger().info("Submap Generator Node started. Waiting for /map and /overall_changes...")
+        self.get_logger().info("Submap Generator Node configured. Waiting for /map and /overall_changes...")
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Activating Submap Generator Node.')
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Deactivating Submap Generator Node.')
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Cleaning up Submap Generator Node.')
+        if self.submap_pub: self.destroy_publisher(self.submap_pub)
+        if self.map_sub: self.destroy_subscription(self.map_sub)
+        if self.changes_sub: self.destroy_subscription(self.changes_sub)
+        
+        self.base_map_msg = None
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Shutting down Submap Generator Node.')
+        return TransitionCallbackReturn.SUCCESS
 
     def map_callback(self, msg):
         """Stores the base map when it arrives."""
@@ -108,7 +138,8 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
