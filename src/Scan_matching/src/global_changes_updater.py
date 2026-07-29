@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import Node, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
 
@@ -11,6 +11,18 @@ class GlobalChangesUpdater(Node):
     def __init__(self):
         super().__init__('global_changes_updater')
         
+        self.declare_parameter('min_cluster_size', 10)
+        
+        # Initialize component variables to None until configured
+        self.sub_bounds = None
+        self.sub_changes = None
+        self.pub_grid = None
+        self.grid_msg = None
+        self.min_cluster_size = None
+
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Configuring Global Changes Updater...')
+        
         latching_qos = QoSProfile(
             depth=1, reliability=QoSReliabilityPolicy.RELIABLE, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
@@ -18,16 +30,35 @@ class GlobalChangesUpdater(Node):
         self.sub_bounds = self.create_subscription(MapBounds, '/map_bounds', self.bounds_callback, latching_qos)
         self.sub_changes = self.create_subscription(MapUpdate, '/map_changes', self.changes_callback, 10)
         
-        self.pub_grid = self.create_publisher(OccupancyGrid, '/overall_changes', latching_qos)
+        self.pub_grid = self.create_lifecycle_publisher(OccupancyGrid, '/overall_changes', latching_qos)
         
-        self.declare_parameter('min_cluster_size', 10)
-
-        # --- NEW: Noise Filtering Threshold ---
+        # --- Noise Filtering Threshold ---
         # Ignore any change cluster with fewer than this many points
         self.min_cluster_size = self.get_parameter('min_cluster_size').value
         
+        self.get_logger().info('Global Changes Updater configured. Waiting for /map_bounds...')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Activating Global Changes Updater.')
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Deactivating Global Changes Updater.')
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Cleaning up Global Changes Updater.')
+        if self.sub_bounds: self.destroy_subscription(self.sub_bounds)
+        if self.sub_changes: self.destroy_subscription(self.sub_changes)
+        if self.pub_grid: self.destroy_publisher(self.pub_grid)
+        
         self.grid_msg = None
-        self.get_logger().info('Global Changes Updater running. Waiting for /map_bounds...')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Shutting down Global Changes Updater.')
+        return TransitionCallbackReturn.SUCCESS
 
     def bounds_callback(self, msg):
         if not self.grid_msg:
@@ -60,7 +91,7 @@ class GlobalChangesUpdater(Node):
         current_data = list(self.grid_msg.data)
         
         for cluster in msg.clusters:
-            # --- NEW: Filter out noise ---
+            # --- Filter out noise ---
             if len(cluster.points) < self.min_cluster_size:
                 continue
                 
@@ -69,11 +100,15 @@ class GlobalChangesUpdater(Node):
                 grid_value = 100  # Lethal Obstacle
             elif cluster.change_type == ClusterChange.NEGATIVE_CHANGE:
                 grid_value = -1   # Unknown / Unexplored (Negative Space)
-            
             elif cluster.change_type == ClusterChange.NEGATIVE_TO_POSITIVE:
                 grid_value = 100  # Lethal Obstacle
             elif cluster.change_type == ClusterChange.POSITIVE_TO_NEGATIVE:
                 grid_value = -1   # Unknown / Unexplored (Negative Space)   
+                
+            # --- NEW: Process the 50 tags directly ---
+            elif cluster.change_type == 50:
+                grid_value = 50   # Cleared Unexplored Free Space
+                
             else:
                 continue
 
@@ -94,7 +129,8 @@ class GlobalChangesUpdater(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = GlobalChangesUpdater()
-    try: rclpy.spin(node)
+    try: 
+        rclpy.spin(node)
     except KeyboardInterrupt: pass
     finally:
         node.destroy_node()

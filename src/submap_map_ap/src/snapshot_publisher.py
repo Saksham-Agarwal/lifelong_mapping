@@ -8,7 +8,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32
 from geometry_msgs.msg import PoseWithCovarianceStamped, Point
 import math
-import time  # --- NEW: Added for cooldown tracking ---
+import time
 
 import tf2_ros
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
@@ -37,9 +37,12 @@ class SnapshotPublisher(Node):
         self.amcl_msg = None
         self.conf_msg = None
         
-        # --- NEW: Cooldown tracking variables ---
+        # Cooldown tracking variables
         self.last_snap_time = 0.0
-        self.cooldown_seconds = self.get_parameter('cooldown_seconds').value  # Prevents spamming triggers for 5 seconds
+        self.cooldown_seconds = self.get_parameter('cooldown_seconds').value
+        
+        # --- NEW: Sequential Snapshot ID tracker ---
+        self.current_snapshot_id = 0.0 
         
         self.get_logger().info('Waiting for map, scan, AMCL, and confidence topics...')
 
@@ -50,7 +53,6 @@ class SnapshotPublisher(Node):
     def conf_callback(self, msg): self.conf_msg = msg
 
     def snap_callback(self, msg):  
-        # --- NEW: Debounce logic using a cooldown timer ---
         if bool(msg.data):
             current_time = time.time()
             if (current_time - self.last_snap_time) > self.cooldown_seconds:
@@ -58,7 +60,6 @@ class SnapshotPublisher(Node):
                 self.last_snap_time = current_time
                 self.check_and_publish()
             else:
-                # Silently ignore the spam triggers while in cooldown
                 pass
 
     def check_and_publish(self):
@@ -78,6 +79,10 @@ class SnapshotPublisher(Node):
 
         snap_msg = MapSnapshot()
 
+        # --- NEW: Increment and assign the Snapshot ID ---
+        self.current_snapshot_id += 1.0
+        snap_msg.snapshot_id = self.current_snapshot_id
+
         # 1. Populate AMCL Guess & Confidence Score
         snap_msg.amcl_x = self.amcl_msg.pose.pose.position.x
         snap_msg.amcl_y = self.amcl_msg.pose.pose.position.y
@@ -86,15 +91,18 @@ class SnapshotPublisher(Node):
         
         snap_msg.amcl_confidence = float(self.conf_msg.data)
 
-        # 2. Extract Data
+        # 2. Extract Data 
         local_coords = self.extract_occupied(self.local_msg)
+        
         scan_coords = self.extract_and_transform_scan(self.scan_msg, trans)
 
         if self.submap_msg is not None:
             submap_coords = self.extract_occupied(self.submap_msg)
+            submap_unexplored = self.extract_unexplored(self.submap_msg) 
         else:
             self.get_logger().info('Submap not yet published. Falling back to global map.')
             submap_coords = local_coords
+            submap_unexplored = [] # Just pass an empty array if there is no submap
 
         # 3. Populate Arrays
         for x, y in local_coords:
@@ -102,17 +110,24 @@ class SnapshotPublisher(Node):
 
         for x, y in submap_coords:
             snap_msg.submap_points.append(Point(x=float(x), y=float(y), z=0.0))
+            
+        for x, y in submap_unexplored: 
+            snap_msg.submap_unexplored_points.append(Point(x=float(x), y=float(y), z=0.0))
 
         for x, y in scan_coords:
             snap_msg.local_points.append(Point(x=float(x), y=float(y), z=0.0))
 
         # 4. Publish
         self.pub_snapshot.publish(snap_msg)
-        self.get_logger().info('Success! Snapshot published.')
+        self.get_logger().info(f'Success! Snapshot {int(self.current_snapshot_id)} published.')
 
     def extract_occupied(self, msg):
         res, w, ox, oy = msg.info.resolution, msg.info.width, msg.info.origin.position.x, msg.info.origin.position.y
         return [((i % w * res) + ox, (i // w * res) + oy) for i, val in enumerate(msg.data) if val > 30]
+
+    def extract_unexplored(self, msg):
+        res, w, ox, oy = msg.info.resolution, msg.info.width, msg.info.origin.position.x, msg.info.origin.position.y
+        return [((i % w * res) + ox, (i // w * res) + oy) for i, val in enumerate(msg.data) if val == -1]
 
     def extract_and_transform_scan(self, msg, trans):
         raw_coords = []

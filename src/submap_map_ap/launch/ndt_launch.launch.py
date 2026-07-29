@@ -1,7 +1,7 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch_ros.actions import Node
+from launch_ros.actions import Node, LifecycleNode
 
 def generate_launch_description():
     # Resolve the path to the centralized configuration file
@@ -36,18 +36,20 @@ def generate_launch_description():
         output='screen'
     )
 
-    ndt_node_cmd = Node(
+    ndt_node_cmd = LifecycleNode(
         package='Scan_matching',
         executable='ndt_node.py',
         name='ndt_node',
+        namespace='',
         parameters=[config_file_path],
         output='screen'
     )
 
-    submap_node_cmd = Node(
+    submap_node_cmd = LifecycleNode(
         package='submap_map_ap',
         executable='submap.py',
         name='submap_generator_node',
+        namespace='',
         parameters=[config_file_path],
         output='screen'
     )
@@ -76,13 +78,42 @@ def generate_launch_description():
         output='screen'
     )
 
-    global_change_update_cmd = Node(
+    global_change_update_cmd = LifecycleNode(
         package='Scan_matching',
         executable='global_changes_updater.py',
         name='global_changes_updater',
+        namespace='',
         parameters=[config_file_path],
         output='screen'
     )
+
+    # ... (your existing node definitions) ...
+
+    # Add the Lifecycle Manager
+    lifecycle_manager_cmd = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_ndt',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,  # Match this to your system
+            'autostart': True,
+            'node_names': [
+                'ndt_node',
+                'global_changes_updater',
+                'submap_generator_node'
+                
+                # Note: Only list the nodes in THIS launch file that are LifecycleNodes
+            ],
+            'bond_timeout': 0.0
+        }]
+    )
+
+
+
+    # ... (your existing add_actions) ...
+
+
 
     # ---------------------------------------------------------
     # Create and Populate Launch Description
@@ -98,5 +129,7 @@ def generate_launch_description():
     ld.add_action(global_change_update_cmd)
     ld.add_action(ndt_visualizer_cmd)
     ld.add_action(cluster_creator_cmd)
+    ld.add_action(lifecycle_manager_cmd) # Add the manager to the launch description
+
 
     return ld

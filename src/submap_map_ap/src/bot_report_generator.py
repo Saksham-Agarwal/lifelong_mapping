@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import Node, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy
 from std_msgs.msg import Bool, Int32
 from nav_msgs.msg import OccupancyGrid
@@ -16,17 +16,27 @@ class BotReportGenerator(Node):
     def __init__(self):
         super().__init__('bot_report_generator')
         
-        # 1. Parameter for the save directory 
-        # (Default assumes you are running from a standard ROS2 workspace)
-        default_dir = '~/lifelong_mapping/src/submap_map_ap/map/Training'
-        self.declare_parameter('Report_Save_Location', default_dir)
+        # 1. Declare parameters without hardcoded fallbacks
+        # These will be pulled directly from submap_map.yaml
+        self.declare_parameter('Report_Save_Location', rclpy.Parameter.Type.STRING)
         self.declare_parameter('occupied_cells_diluter', 2.5)
-        self.diluter = self.get_parameter('occupied_cells_diluter').value
 
         # 2. Caches for the data
         self.latest_occupied_count = None
         self.latest_changes_map = None
         self.latest_submap = None
+        self.diluter = None
+        
+        # Initialize component variables to None until configured
+        self.sub_occupied_count = None
+        self.sub_overall_changes = None
+        self.sub_submap = None
+        self.sub_is_lost = None
+
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Configuring Report Generator Node...')
+        
+        self.diluter = self.get_parameter('occupied_cells_diluter').value
         
         # 3. Latching QoS (Required for grabbing maps that are published infrequently)
         latching_qos = QoSProfile(
@@ -50,7 +60,35 @@ class BotReportGenerator(Node):
         self.sub_is_lost = self.create_subscription(
             Bool, '/is_bot_lost', self.is_lost_callback, 10)
 
-        self.get_logger().info('Report Generator started. Waiting for /is_bot_lost trigger...')
+        self.get_logger().info('Report Generator configured. Waiting for /is_bot_lost trigger...')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Activating Report Generator Node.')
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Deactivating Report Generator Node.')
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Cleaning up Report Generator Node.')
+        
+        if self.sub_occupied_count: self.destroy_subscription(self.sub_occupied_count)
+        if self.sub_overall_changes: self.destroy_subscription(self.sub_overall_changes)
+        if self.sub_submap: self.destroy_subscription(self.sub_submap)
+        if self.sub_is_lost: self.destroy_subscription(self.sub_is_lost)
+        
+        # Reset caches so the node can start fresh if restarted
+        self.latest_occupied_count = None
+        self.latest_changes_map = None
+        self.latest_submap = None
+        
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info('Shutting down Report Generator Node.')
+        return TransitionCallbackReturn.SUCCESS
 
     def count_callback(self, msg):
         self.latest_occupied_count = msg.data
@@ -95,8 +133,13 @@ class BotReportGenerator(Node):
             self.get_logger().error('Internal occupied count is 0. Cannot divide by zero!')
             return
 
-        # 1. Setup Directory
-        raw_dir = self.get_parameter('Report_Save_Location').get_parameter_value().string_value
+        # 1. Setup Directory from Parameters
+        raw_dir = self.get_parameter('Report_Save_Location').value
+        
+        if not raw_dir:
+            self.get_logger().error("Report_Save_Location parameter is missing or empty!")
+            return
+            
         save_dir = os.path.expanduser(raw_dir) # Expands '~' to /home/username
         os.makedirs(save_dir, exist_ok=True)
         
@@ -113,7 +156,7 @@ class BotReportGenerator(Node):
         deflation_factor = 6.0
         est_pos_cells = raw_pos_cells
         est_neg_cells = raw_neg_cells / deflation_factor
-        occupied_cells = self.latest_occupied_count/ self.diluter
+        occupied_cells = self.latest_occupied_count / self.diluter
         
         pos_pct = (est_pos_cells / occupied_cells) * 100
         neg_pct = (est_neg_cells / occupied_cells) * 100
