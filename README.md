@@ -1,4 +1,4 @@
-
+[sped_up.webm](https://github.com/user-attachments/assets/87dd5dc4-ea04-4395-8461-8e804673358e)[sped_up.webm](https://github.com/user-attachments/assets/4d5d124a-04f5-4e53-bfdd-c687ba984468)
 ## Lifelong Mapping
 
 The Lifelong Mapping System is a ROS2-based detection pipeline designed to enable autonomous robots to identify environmental changes and classify them as temporary or permanent. Instead of failing when an environment drifts from its initial state, this system empowers the robot to determine whether a detected change requires the room to be re-scanned and the map updated, or if it is merely transient and can be safely ignored.
@@ -12,7 +12,8 @@ By adapting 3D point clouds into a 2D framework, the pipeline extracts the core 
 
 
 ## Demo Video
-![Demo Video](Documentation/sped_up.webm)
+![[sped_up.webm](https://github.com/user-attachments/assets/72ceccce-1e5d-4b6f-b06f-1420b19f13ad)
+
 
 ## Result
 ![Result](Documentation/Result.png)
