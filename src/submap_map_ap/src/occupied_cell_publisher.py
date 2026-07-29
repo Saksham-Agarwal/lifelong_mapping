@@ -44,12 +44,15 @@ class MapAnalyticsPublisher(Node):
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Activating Map Analytics Publisher.')
-        # Must call super() first so the publisher is actually turned on
+        # 1. Call super() first so the lifecycle publisher becomes active
         ret = super().on_activate(state)
         self.is_active_state = True
         
-        # Now that we are active, try to process the map if we already got it
-        self.try_process_map()
+        # 2. Force processing if a map was already cached during configuration
+        if self.saved_map_msg is not None and not self.published:
+            self.get_logger().info('Processing cached /map upon activation...')
+            self.try_process_map()
+            
         return ret
 
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
@@ -59,9 +62,14 @@ class MapAnalyticsPublisher(Node):
 
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info('Cleaning up Map Analytics Publisher.')
-        if self.sub_map: self.destroy_subscription(self.sub_map)
-        if self.pub_internal_occupied: self.destroy_publisher(self.pub_internal_occupied)
+        if self.sub_map: 
+            self.destroy_subscription(self.sub_map)
+            self.sub_map = None
+        if self.pub_internal_occupied: 
+            self.destroy_publisher(self.pub_internal_occupied)
+            self.pub_internal_occupied = None
         
+        # Reset ALL flags so re-configuration allows recalculating on a new map
         self.published = False
         self.is_active_state = False
         self.saved_map_msg = None
@@ -72,12 +80,12 @@ class MapAnalyticsPublisher(Node):
         return TransitionCallbackReturn.SUCCESS
 
     def map_callback(self, msg):
-        # Save the map as soon as it arrives, then try to process it
+        # Save map message whenever it arrives
         self.saved_map_msg = msg
         self.try_process_map()
 
     def try_process_map(self):
-        # Only process if we are active, haven't published yet, and have the map
+        # Only process if active, not yet published, and map data is available
         if not self.is_active_state or self.published or self.saved_map_msg is None:
             return
             
@@ -110,8 +118,9 @@ class MapAnalyticsPublisher(Node):
         
         count_msg = Int32()
         count_msg.data = final_count
-        self.pub_internal_occupied.publish(count_msg)
         
+        # Publish to the latched topic
+        self.pub_internal_occupied.publish(count_msg)
         self.published = True
         
         mode_str = "INCLUDING Walls" if wall_inclusion else "EXCLUDING Walls"
