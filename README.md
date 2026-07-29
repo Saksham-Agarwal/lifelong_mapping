@@ -12,8 +12,7 @@ By adapting 3D point clouds into a 2D framework, the pipeline extracts the core 
 
 
 ## Demo Video
-![sped_up.webm](https://github.com/user-attachments/assets/72ceccce-1e5d-4b6f-b06f-1420b19f13ad)
-
+https://github.com/user-attachments/assets/72ceccce-1e5d-4b6f-b06f-1420b19f13ad
 
 ## Result
 ![Result](Documentation/Result.png)
