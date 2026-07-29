@@ -2,7 +2,7 @@
   ros__parameters:
     deadzone_of_bot: 70.0
     use_sim_time: true
-    map_path: "/home/saksham-22/lifelong_mapping/src/submap_map_ap/map/bookstore/map.yaml"
+    map_path: "/path/to/location/for/map/yam_file"
 
 global_change_updater:
   ros__parameters:
