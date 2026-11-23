@@ -1,4 +1,4 @@
-## Lifelong Mapping Solution
+## Wait, That wasn't here?
 
 This system is a ROS2-based detection pipeline designed to enable autonomous robots to identify environmental changes and "save" them on a new custom map. Instead of failing when an environment drifts from its initial state, this system empowers the robot to determine whether a detected change requires the room to be re-scanned and the map updated, or if it is merely transient and can be safely ignored.
 
