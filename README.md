@@ -7,11 +7,14 @@ By adapting 3D point clouds into a 2D framework, the pipeline extracts the core 
 ---
 
 ## Pipeline Architecture
+**Reference Paper:** *Lifelong 3D Mapping Framework for Hand-held & Robot-mounted LiDAR Mapping Systems* — [arXiv:2501.18110](https://arxiv.org/abs/2501.18110)
+
 ![Pipeline](Documentation/Pipeline.png)
 
 
 ## Demo Video
 https://github.com/user-attachments/assets/72ceccce-1e5d-4b6f-b06f-1420b19f13ad
+
 
 ## Result
 ![Result](Documentation/Result.png)
